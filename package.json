@@ -1,0 +1,33 @@
+{
+  "name": "slackoff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Interactive Slack bridge for opted-in OMP sessions",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "slackoff-daemon": "./dist/src/daemon/main.js"
+  },
+  "exports": {
+    "./extension": "./dist/src/extension.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/**/*.test.ts"
+  },
+  "dependencies": {
+    "@slack/bolt": "5.0.0",
+    "@slack/types": "^3.0.0",
+    "@slack/web-api": "^8.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "17.2.11",
+    "@types/node": "^24.0.0",
+    "tsx": "4.23.11",
+    "typescript": "7.0.2"
+  }
+}
