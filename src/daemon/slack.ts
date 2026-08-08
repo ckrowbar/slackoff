@@ -14,16 +14,7 @@ import {
   type SessionStatus,
   type SlackBinding,
 } from "../protocol.js";
-import {
-  buildInstructionModal,
-  buildSessionBlocks,
-  escapeMrkdwn,
-  INSTRUCTION_BLOCK,
-  INSTRUCTION_INPUT,
-  INSTRUCTION_VIEW,
-  SEND_INSTRUCTION_ACTION,
-  STOP_ACTION,
-} from "./blocks.js";
+import { buildSessionBlocks, escapeMrkdwn, STOP_ACTION } from "./blocks.js";
 import type { ActiveSession, FeedbackRecord } from "./registry.js";
 import { SessionRegistry } from "./registry.js";
 
@@ -41,16 +32,6 @@ const DmMessageSchema = z.object({
 const ActionValueSchema = z.object({ value: z.string().min(1) });
 const ActionBodySchema = z.object({
   user: z.object({ id: z.string().min(1) }),
-  trigger_id: z.string().min(1),
-});
-const ViewBodySchema = z.object({
-  user: z.object({ id: z.string().min(1) }),
-  view: z.object({
-    private_metadata: z.string().min(1),
-    state: z.object({
-      values: z.record(z.string(), z.record(z.string(), z.object({ value: z.string().optional() }))),
-    }),
-  }),
 });
 const SlackErrorSchema = z.object({ data: z.object({ error: z.string() }) });
 
@@ -60,6 +41,7 @@ export class SlackController {
   readonly #registry: SessionRegistry;
   readonly #seenEvents = new Map<string, number>();
   readonly #workingTimers = new Map<string, NodeJS.Timeout>();
+  readonly #rootRefreshTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(config: DaemonConfig, registry: SessionRegistry) {
     this.#config = config;
@@ -83,6 +65,8 @@ export class SlackController {
 
   async stop(): Promise<void> {
     for (const timer of this.#workingTimers.values()) clearTimeout(timer);
+    for (const timer of this.#rootRefreshTimers.values()) clearTimeout(timer);
+    this.#rootRefreshTimers.clear();
     this.#workingTimers.clear();
     await this.#app.stop();
   }
@@ -93,8 +77,8 @@ export class SlackController {
         await this.#app.client.chat.update({
           channel: binding.channelId,
           ts: binding.threadTs,
-          text: `Slackoff session: ${session.title}`,
-          blocks: buildSessionBlocks(session, binding.bindingId, "idle", undefined, "Just connected"),
+          text: `OMP session: ${session.title}`,
+          blocks: buildSessionBlocks(session, binding.bindingId, "idle", undefined),
         });
         return binding;
       } catch (error) {
@@ -107,25 +91,21 @@ export class SlackController {
     const bindingId = randomUUID();
     const result = await this.#app.client.chat.postMessage({
       channel: this.#config.userId,
-      text: `Slackoff session: ${session.title}`,
-      blocks: buildSessionBlocks(session, bindingId, "idle", undefined, "Just connected"),
+      text: `OMP session: ${session.title}`,
+      blocks: buildSessionBlocks(session, bindingId, "idle", undefined),
     });
     if (!result.channel || !result.ts) throw new Error("Slack did not return a DM channel and message timestamp");
     return { bindingId, channelId: result.channel, threadTs: result.ts };
   }
 
   async refreshRoot(record: ActiveSession): Promise<void> {
+    clearTimeout(this.#rootRefreshTimers.get(record.session.id));
+    this.#rootRefreshTimers.delete(record.session.id);
     await this.#app.client.chat.update({
       channel: record.binding.channelId,
       ts: record.binding.threadTs,
-      text: `Slackoff session: ${record.session.title} · ${record.status}`,
-      blocks: buildSessionBlocks(
-        record.session,
-        record.binding.bindingId,
-        record.status,
-        record.activity,
-        formatActivityTime(record.lastActivity),
-      ),
+      text: `${record.session.title} · ${record.activity ?? record.status}`,
+      blocks: buildSessionBlocks(record.session, record.binding.bindingId, record.status, record.activity),
     });
 
     const priorTimer = this.#workingTimers.get(record.session.id);
@@ -138,6 +118,16 @@ export class SlackController {
     }, 20_000);
     timer.unref();
     this.#workingTimers.set(record.session.id, timer);
+  }
+
+  scheduleRootRefresh(record: ActiveSession): void {
+    clearTimeout(this.#rootRefreshTimers.get(record.session.id));
+    const timer = setTimeout(() => {
+      this.#rootRefreshTimers.delete(record.session.id);
+      void this.refreshRoot(record).catch((error) => console.error("OMP status update failed", error));
+    }, 350);
+    timer.unref();
+    this.#rootRefreshTimers.set(record.session.id, timer);
   }
 
   async postTranscript(record: ActiveSession, role: "user" | "assistant", text: string): Promise<void> {
@@ -195,7 +185,6 @@ export class SlackController {
     };
     record.status = "waiting";
     record.activity = "Waiting for your reply in Slack";
-    record.lastActivity = new Date();
     await this.refreshRoot(record);
   }
 
@@ -220,7 +209,6 @@ export class SlackController {
     });
     record.status = nextStatus;
     record.activity = nextStatus === "working" ? "Question cancelled" : undefined;
-    record.lastActivity = new Date();
     await this.refreshRoot(record);
   }
 
@@ -240,7 +228,7 @@ export class SlackController {
       if (!message.thread_ts) {
         await this.#app.client.chat.postMessage({
           channel: message.channel,
-          text: "Reply inside a Slackoff session thread, or enable a session from OMP with /slackoff on.",
+          text: "Reply inside an OMP session thread, or enable a session from OMP with /slackoff on.",
         });
         return;
       }
@@ -251,18 +239,7 @@ export class SlackController {
       await this.#routeInstruction(record, message.text);
     });
 
-    this.#app.action(SEND_INSTRUCTION_ACTION, async ({ ack, body, action, client }) => {
-      await ack();
-      const parsedBody = ActionBodySchema.safeParse(body);
-      const parsedAction = ActionValueSchema.safeParse(action);
-      if (!parsedBody.success || !parsedAction.success || parsedBody.data.user.id !== this.#config.userId) return;
-      const record = this.#registry.getByBindingId(parsedAction.data.value);
-      if (!record) return;
-      await client.views.open({
-        trigger_id: parsedBody.data.trigger_id,
-        view: buildInstructionModal(record.binding.bindingId, record.session.title),
-      });
-    });
+    
 
     this.#app.action(STOP_ACTION, async ({ ack, body, action }) => {
       await ack();
@@ -274,16 +251,7 @@ export class SlackController {
       await this.#routeStop(record);
     });
 
-    this.#app.view(INSTRUCTION_VIEW, async ({ ack, body }) => {
-      await ack();
-      const parsed = ViewBodySchema.safeParse(body);
-      if (!parsed.success || parsed.data.user.id !== this.#config.userId) return;
-      const record = this.#registry.getByBindingId(parsed.data.view.private_metadata);
-      if (!record) return;
-      const text = parsed.data.view.state.values[INSTRUCTION_BLOCK]?.[INSTRUCTION_INPUT]?.value?.trim();
-      if (!text) return;
-      await this.#routeInstruction(record, text, true);
-    });
+    
   }
 
   async #routeQuestionAnswer(record: ActiveSession, answer: string): Promise<boolean> {
@@ -320,28 +288,11 @@ export class SlackController {
     });
     record.status = "working";
     record.activity = "Reply received";
-    record.lastActivity = new Date();
     await this.refreshRoot(record);
     return true;
   }
 
-  async #routeInstruction(record: ActiveSession, text: string, mirrorInstruction = false): Promise<void> {
-    if (mirrorInstruction) {
-      for (const chunk of splitText(text, 2_800)) {
-        await this.#app.client.chat.postMessage({
-          channel: record.binding.channelId,
-          thread_ts: record.binding.threadTs,
-          text: `Slack instruction: ${chunk}`,
-          blocks: [
-            {
-              type: "section",
-              text: { type: "mrkdwn", text: `*Slack instruction*\n${escapeMrkdwn(chunk)}` },
-            },
-          ],
-        });
-      }
-    }
-
+  async #routeInstruction(record: ActiveSession, text: string): Promise<void> {
     if (!record.socket) {
       await this.#app.client.chat.postMessage({
         channel: record.binding.channelId,
@@ -380,7 +331,7 @@ export class SlackController {
     if (record.status !== "working" || !record.lastCommandId) return;
     const feedback = record.feedback.get(record.lastCommandId);
     if (!feedback || feedback.completed) return;
-    await this.#updateFeedback(record, feedback, `Still working · last activity ${formatActivityTime(record.lastActivity)}`);
+    await this.#updateFeedback(record, feedback, "Still working…");
   }
 
   async #completeLatestFeedback(record: ActiveSession): Promise<void> {
@@ -443,14 +394,6 @@ function buildQuestionBlocks(
   ];
 }
 
-function formatActivityTime(date: Date): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1_000));
-  if (seconds < 5) return "just now";
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  return date.toISOString();
-}
 
 function splitText(text: string, maximum: number): string[] {
   const normalized = text.trim();

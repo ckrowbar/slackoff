@@ -1,37 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  buildInstructionModal,
-  buildSessionBlocks,
-  INSTRUCTION_VIEW,
-  SEND_INSTRUCTION_ACTION,
-  STOP_ACTION,
-} from "../src/daemon/blocks.js";
+import { buildSessionBlocks, STOP_ACTION } from "../src/daemon/blocks.js";
 
 const session = { id: "session-123456789", title: "Fix parser", project: "project" };
 
-test("active session card exposes binding-scoped controls", () => {
-  const blocks = buildSessionBlocks(session, "binding-1", "working", "Editing", "just now");
+test("working session card shows the current activity and Stop control", () => {
+  const blocks = buildSessionBlocks(session, "binding-1", "working", "Editing");
   const serialized = JSON.stringify(blocks);
 
-  assert.match(serialized, new RegExp(SEND_INSTRUCTION_ACTION));
   assert.match(serialized, new RegExp(STOP_ACTION));
   assert.match(serialized, /binding-1/);
-  assert.match(serialized, /Editing/);
+  assert.match(serialized, /🔵 Editing/);
+  assert.doesNotMatch(serialized, /Send instruction|Last activity|Slackoff ·/);
 });
 
-test("offline session card does not expose controls", () => {
-  const blocks = buildSessionBlocks(session, "binding-1", "offline", undefined, "1m ago");
+test("completed session card shows Done without controls", () => {
+  const blocks = buildSessionBlocks(session, "binding-1", "done", undefined);
   const serialized = JSON.stringify(blocks);
 
-  assert.doesNotMatch(serialized, new RegExp(SEND_INSTRUCTION_ACTION));
+  assert.match(serialized, /🟢 Done/);
   assert.doesNotMatch(serialized, new RegExp(STOP_ACTION));
 });
 
-test("instruction modal routes submission by opaque binding ID", () => {
-  const modal = buildInstructionModal("binding-1", session.title);
+test("offline session card does not expose controls", () => {
+  const blocks = buildSessionBlocks(session, "binding-1", "offline", undefined);
+  const serialized = JSON.stringify(blocks);
 
-  assert.equal(modal.callback_id, INSTRUCTION_VIEW);
-  assert.equal(modal.private_metadata, "binding-1");
+  assert.doesNotMatch(serialized, new RegExp(STOP_ACTION));
 });

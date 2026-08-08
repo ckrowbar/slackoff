@@ -133,8 +133,7 @@ export class SlackoffDaemon {
         if (!record || record.socket !== socket) return;
         record.status = message.status;
         record.activity = message.activity;
-        record.lastActivity = new Date(message.occurredAt);
-        await this.#slack.refreshRoot(record);
+        this.#slack.scheduleRootRefresh(record);
         return;
       }
       case "transcript": {

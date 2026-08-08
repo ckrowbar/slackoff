@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const PROTOCOL_VERSION = 1 as const;
 
-export const SessionStatusSchema = z.enum(["idle", "working", "waiting", "error", "offline", "disabled"]);
+export const SessionStatusSchema = z.enum(["idle", "working", "waiting", "done", "error", "offline", "disabled"]);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 
 export const SlackBindingSchema = z.object({
@@ -38,7 +38,6 @@ const StatusMessageSchema = z.object({
   sessionId: z.string().min(1),
   status: SessionStatusSchema,
   activity: z.string().optional(),
-  occurredAt: z.iso.datetime(),
 });
 
 const TranscriptMessageSchema = z.object({

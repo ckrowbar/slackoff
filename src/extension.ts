@@ -97,9 +97,23 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       type: "status",
       sessionId: registeredSessionId,
       status,
-      occurredAt: new Date().toISOString(),
       ...(activity ? { activity } : {}),
     });
+  };
+
+  const resolveProjectName = async (ctx: ExtensionContext): Promise<string> => {
+    const fallback = basename(ctx.cwd);
+    if (!process.env.TMUX) return fallback;
+    try {
+      const result = await pi.exec("tmux", ["display-message", "-p", "#S"]);
+      const sessionName = result.stdout.trim();
+      if (result.code === 0 && sessionName) return sessionName;
+    } catch (error) {
+      pi.logger.warn("Could not resolve tmux session name for Slackoff project", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return fallback;
   };
 
   const enableSlackAsk = async (): Promise<void> => {
@@ -140,7 +154,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
         session: {
           id: sessionId,
           title: pi.getSessionName() ?? `OMP ${sessionId.slice(0, 8)}`,
-          project: basename(ctx.cwd),
+          project: await resolveProjectName(ctx),
         },
         ...(!resetBinding && currentState.binding ? { binding: currentState.binding } : {}),
       });
@@ -397,17 +411,18 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     getClient().send({ type: "transcript", sessionId: registeredSessionId, role: "user", text: event.text.trim() });
   });
 
-  pi.on("agent_start", () => sendStatus("working", "Starting turn"));
+  pi.on("agent_start", () => sendStatus("working", "Starting"));
   pi.on("turn_start", () => sendStatus("working", "Thinking"));
   pi.on("tool_execution_start", (event) => {
     const activity = TOOL_ACTIVITY[event.toolName] ?? `Using ${event.toolName}`;
-    sendStatus(event.toolName === "ask" ? "waiting" : "working", activity);
+    const waitingForUser = event.toolName === "ask" || event.toolName === "slack_ask";
+    sendStatus(waitingForUser ? "waiting" : "working", waitingForUser ? "Waiting for your reply" : activity);
   });
   pi.on("tool_execution_end", (event) => {
-    sendStatus("working", event.isError ? `${event.toolName} failed` : "Continuing");
+    sendStatus("working", event.isError ? `Recovering from ${event.toolName} error` : "Thinking");
   });
   pi.on("tool_approval_requested", (event) => sendStatus("waiting", `Waiting for local approval: ${event.toolName}`));
-  pi.on("tool_approval_resolved", () => sendStatus("working", "Approval resolved"));
+  pi.on("tool_approval_resolved", () => sendStatus("working", "Thinking"));
   pi.on("auto_retry_start", () => sendStatus("working", "Retrying"));
 
   pi.on("message_end", (event) => {
@@ -418,7 +433,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_end", (event) => {
-    if (!event.willContinue) sendStatus("idle");
+    if (!event.willContinue) sendStatus("done");
   });
 
   pi.on("session_shutdown", () => {

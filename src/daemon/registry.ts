@@ -22,7 +22,6 @@ export interface ActiveSession {
   socket: Socket | undefined;
   status: SessionStatus;
   activity: string | undefined;
-  lastActivity: Date;
   feedback: Map<string, FeedbackRecord>;
   lastCommandId: string | undefined;
   pendingQuestion: PendingQuestion | undefined;
@@ -54,7 +53,6 @@ export class SessionRegistry {
       socket,
       status: "idle",
       activity: undefined,
-      lastActivity: new Date(),
       feedback: new Map(),
       lastCommandId: undefined,
       pendingQuestion: undefined,
@@ -64,7 +62,6 @@ export class SessionRegistry {
     record.socket = socket;
     record.status = "idle";
     record.activity = undefined;
-    record.lastActivity = new Date();
 
     this.#bySessionId.set(session.id, record);
     this.#addIndexes(record);
@@ -77,7 +74,6 @@ export class SessionRegistry {
     record.socket = undefined;
     record.status = status;
     record.activity = undefined;
-    record.lastActivity = new Date();
     return record;
   }
 
@@ -88,7 +84,6 @@ export class SessionRegistry {
       record.socket = undefined;
       record.status = "offline";
       record.activity = undefined;
-      record.lastActivity = new Date();
       disconnected.push(record);
     }
     return disconnected;
