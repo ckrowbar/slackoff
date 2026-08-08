@@ -366,6 +366,13 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     currentContext = ctx;
     currentState = restoreState(ctx);
+    if (process.env.SLACKOFF_AUTO_ENABLE === "1") {
+      delete process.env.SLACKOFF_AUTO_ENABLE;
+      if (!currentState.enabled) {
+        currentState = { version: 1, enabled: true };
+        persistState();
+      }
+    }
     if (currentState.enabled) await activate(ctx);
 
     ctx.setInterval(() => {

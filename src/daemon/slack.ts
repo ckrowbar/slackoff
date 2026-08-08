@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 
 import { App, LogLevel } from "@slack/bolt";
 import type { KnownBlock } from "@slack/types";
@@ -15,11 +16,22 @@ import {
 } from "../protocol.js";
 import {
   buildCollapsedSessionBlocks,
+  buildHomeView,
+  buildLaunchModal,
   buildSessionBlocks,
   CLOSE_THREAD_ACTION,
   escapeMrkdwn,
+  HOME_CWD_BLOCK,
+  HOME_CWD_INPUT,
+  HOME_LAUNCH_VIEW,
+  HOME_NAME_BLOCK,
+  HOME_NAME_INPUT,
+  HOME_NEW_SESSION_ACTION,
+  HOME_PROMPT_BLOCK,
+  HOME_PROMPT_INPUT,
   STOP_ACTION,
 } from "./blocks.js";
+import { TmuxLauncher } from "./launcher.js";
 import type { ActiveSession } from "./registry.js";
 import { SessionRegistry } from "./registry.js";
 
@@ -38,19 +50,41 @@ const ActionValueSchema = z.object({ value: z.string().min(1) });
 const ActionBodySchema = z.object({
   user: z.object({ id: z.string().min(1) }),
 });
+const HomeActionBodySchema = z.object({
+  user: z.object({ id: z.string().min(1) }),
+  trigger_id: z.string().min(1),
+});
+const HomeLaunchBodySchema = z.object({
+  user: z.object({ id: z.string().min(1) }),
+});
+const HomeLaunchStateSchema = z.object({
+  [HOME_NAME_BLOCK]: z.object({
+    [HOME_NAME_INPUT]: z.object({ value: z.string() }),
+  }),
+  [HOME_CWD_BLOCK]: z.object({
+    [HOME_CWD_INPUT]: z.object({ value: z.string() }),
+  }),
+  [HOME_PROMPT_BLOCK]: z.object({
+    [HOME_PROMPT_INPUT]: z.object({ value: z.string().nullish() }),
+  }),
+});
 const SlackErrorSchema = z.object({ data: z.object({ error: z.string() }) });
 
 export class SlackController {
   readonly #app: App;
   readonly #config: DaemonConfig;
   readonly #registry: SessionRegistry;
+  readonly #launcher: TmuxLauncher;
   readonly #seenEvents = new Map<string, number>();
   readonly #rootRefreshTimers = new Map<string, NodeJS.Timeout>();
   readonly #closedBindings = new Set<string>();
+  #homeRefreshTimer: NodeJS.Timeout | undefined;
+  #homeNotice: string | undefined;
 
   constructor(config: DaemonConfig, registry: SessionRegistry) {
     this.#config = config;
     this.#registry = registry;
+    this.#launcher = new TmuxLauncher(config.ompPath);
     this.#app = new App({
       token: config.botToken,
       appToken: config.appToken,
@@ -66,11 +100,13 @@ export class SlackController {
 
   async start(): Promise<void> {
     await this.#app.start();
+    await this.publishHome();
   }
-
   async stop(): Promise<void> {
     for (const timer of this.#rootRefreshTimers.values()) clearTimeout(timer);
     this.#rootRefreshTimers.clear();
+    clearTimeout(this.#homeRefreshTimer);
+    this.#homeRefreshTimer = undefined;
     await this.#app.stop();
   }
 
@@ -125,6 +161,30 @@ export class SlackController {
     }, 350);
     timer.unref();
     this.#rootRefreshTimers.set(record.session.id, timer);
+  }
+
+  async publishHome(): Promise<void> {
+    const sessions = [...this.#registry.values()]
+      .filter((record) => record.socket && !record.collapsed)
+      .map((record) => ({
+        title: record.session.title,
+        project: record.session.project,
+        status: record.status,
+        ...(record.activity ? { activity: record.activity } : {}),
+      }));
+    await this.#app.client.views.publish({
+      user_id: this.#config.userId,
+      view: buildHomeView(sessions, this.#homeNotice),
+    });
+  }
+
+  scheduleHomeRefresh(): void {
+    clearTimeout(this.#homeRefreshTimer);
+    this.#homeRefreshTimer = setTimeout(() => {
+      this.#homeRefreshTimer = undefined;
+      void this.publishHome().catch((error) => console.error("OMP App Home update failed", error));
+    }, 500);
+    this.#homeRefreshTimer.unref();
   }
 
   async postTranscript(record: ActiveSession, role: "user" | "assistant", text: string): Promise<void> {
@@ -195,6 +255,51 @@ export class SlackController {
   }
 
   #registerHandlers(): void {
+    this.#app.event("app_home_opened", async ({ event }) => {
+      if (event.user !== this.#config.userId || event.tab !== "home") return;
+      await this.publishHome();
+    });
+
+    this.#app.action(HOME_NEW_SESSION_ACTION, async ({ ack, body }) => {
+      await ack();
+      const parsed = HomeActionBodySchema.safeParse(body);
+      if (!parsed.success || parsed.data.user.id !== this.#config.userId) return;
+      await this.#app.client.views.open({
+        trigger_id: parsed.data.trigger_id,
+        view: buildLaunchModal(homedir()),
+      });
+    });
+
+    this.#app.view(HOME_LAUNCH_VIEW, async ({ ack, body, view }) => {
+      const parsedBody = HomeLaunchBodySchema.safeParse(body);
+      if (!parsedBody.success || parsedBody.data.user.id !== this.#config.userId) {
+        await ack();
+        return;
+      }
+      const parsedState = HomeLaunchStateSchema.safeParse(view.state.values);
+      if (!parsedState.success) {
+        await ack({
+          response_action: "errors",
+          errors: { [HOME_NAME_BLOCK]: "The launch form is incomplete. Reopen it and try again." },
+        });
+        return;
+      }
+
+      const name = parsedState.data[HOME_NAME_BLOCK][HOME_NAME_INPUT].value;
+      const cwd = parsedState.data[HOME_CWD_BLOCK][HOME_CWD_INPUT].value;
+      const prompt = parsedState.data[HOME_PROMPT_BLOCK][HOME_PROMPT_INPUT].value ?? undefined;
+      try {
+        const launched = await this.#launcher.launch({ name, cwd, ...(prompt ? { prompt } : {}) });
+        this.#homeNotice = `Started tmux session \`${launched.name}\` in \`${launched.cwd}\`.`;
+        await ack();
+        await this.publishHome();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const block = message.startsWith("Working directory") ? HOME_CWD_BLOCK : HOME_NAME_BLOCK;
+        await ack({ response_action: "errors", errors: { [block]: message } });
+      }
+    });
+
     this.#app.event("message", async ({ event, body }) => {
       const eventId = "event_id" in body && typeof body.event_id === "string" ? body.event_id : undefined;
       if (eventId && this.#isDuplicateEvent(eventId)) return;

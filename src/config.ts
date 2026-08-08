@@ -9,12 +9,14 @@ const FileConfigSchema = z.object({
   appTokenFile: z.string().min(1).optional(),
   socketPath: z.string().min(1).optional(),
   nodePath: z.string().min(1).optional(),
+  ompPath: z.string().min(1).optional(),
 });
 
 export interface ClientConfig {
   userId: string;
   socketPath: string;
   nodePath: string;
+  ompPath: string;
   configPath: string;
 }
 
@@ -39,6 +41,7 @@ export function loadClientConfig(environment: NodeJS.ProcessEnv = process.env): 
     userId,
     socketPath: environment.SLACKOFF_SOCKET_PATH ?? fileConfig.socketPath ?? join(runtimeDirectory, "slackoff.sock"),
     nodePath: environment.SLACKOFF_NODE ?? fileConfig.nodePath ?? "node",
+    ompPath: environment.SLACKOFF_OMP_PATH ?? fileConfig.ompPath ?? join(homedir(), ".local", "bin", "omp"),
     configPath,
   };
 }

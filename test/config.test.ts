@@ -13,6 +13,7 @@ const ENV_KEYS = [
   "SLACKOFF_BOT_TOKEN_FILE",
   "SLACKOFF_USER_ID",
   "SLACKOFF_SOCKET_PATH",
+  "SLACKOFF_OMP_PATH",
 ] as const;
 
 test("loads Slack credentials from protected files", () => {
@@ -28,12 +29,14 @@ test("loads Slack credentials from protected files", () => {
       SLACKOFF_BOT_TOKEN_FILE: botTokenFile,
       SLACKOFF_USER_ID: "U123",
       SLACKOFF_SOCKET_PATH: join(directory, "slackoff.sock"),
+      SLACKOFF_OMP_PATH: "/opt/omp/bin/omp",
     },
     () => {
       const config = loadDaemonConfig();
       assert.equal(config.appToken, "xapp-test");
       assert.equal(config.botToken, "xoxb-test");
       assert.equal(config.userId, "U123");
+      assert.equal(config.ompPath, "/opt/omp/bin/omp");
     },
   );
   rmSync(directory, { recursive: true });

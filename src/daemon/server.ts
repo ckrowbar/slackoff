@@ -94,6 +94,7 @@ export class SlackoffDaemon {
           : this.#slack.refreshRoot(record);
         void update.catch((error) => console.error("Slackoff offline update failed", error));
       }
+      this.#slack.scheduleHomeRefresh();
     });
   }
 
@@ -111,6 +112,7 @@ export class SlackoffDaemon {
           }
           this.#respond(socket, { type: "response", requestId: message.requestId, ok: true, binding });
           await this.#slack.refreshRoot(record);
+          this.#slack.scheduleHomeRefresh();
         } catch (error) {
           this.#respond(socket, {
             type: "response",
@@ -126,6 +128,7 @@ export class SlackoffDaemon {
         const record = this.#registry.unregister(message.sessionId, socket, status);
         if (record?.pendingQuestion) await this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, status);
         else if (record) await this.#slack.refreshRoot(record);
+        if (record) this.#slack.scheduleHomeRefresh();
         return;
       }
       case "status": {
@@ -134,6 +137,7 @@ export class SlackoffDaemon {
         record.status = message.status;
         record.activity = message.activity;
         this.#slack.scheduleRootRefresh(record);
+        this.#slack.scheduleHomeRefresh();
         return;
       }
       case "transcript": {
