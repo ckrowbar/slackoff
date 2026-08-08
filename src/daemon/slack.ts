@@ -188,17 +188,18 @@ export class SlackController {
   }
 
   async postTranscript(record: ActiveSession, role: "user" | "assistant", text: string): Promise<void> {
-    const label = role === "user" ? "Local instruction" : "OMP";
-
     for (const chunk of splitText(text, 2_800)) {
       await this.#app.client.chat.postMessage({
         channel: record.binding.channelId,
         thread_ts: record.binding.threadTs,
-        text: `${label}: ${chunk}`,
+        text: role === "user" ? `Local instruction: ${chunk}` : chunk,
         blocks: [
           {
             type: "section",
-            text: { type: "mrkdwn", text: `*${label}*\n${escapeMrkdwn(chunk)}` },
+            text: {
+              type: "mrkdwn",
+              text: role === "user" ? `*Local instruction*\n${escapeMrkdwn(chunk)}` : escapeMrkdwn(chunk),
+            },
           },
         ],
       });
