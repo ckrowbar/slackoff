@@ -199,7 +199,17 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     const ctx = currentContext;
     if (!ctx || message.type === "response") return;
     if (message.type === "replaced") {
-      if (message.sessionId === registeredSessionId) {
+      if (message.sessionId !== registeredSessionId) return;
+      if (message.reason === "closed") {
+        currentState = { version: 1, enabled: false };
+        persistState();
+        if (!ctx.isIdle()) ctx.abort();
+        deactivate("disabled");
+        void disableSlackAsk().catch((error) =>
+          reportError(error instanceof Error ? error : new Error(String(error))),
+        );
+        ctx.ui.notify("Slack thread closed; /slackoff on will create a new thread", "info");
+      } else {
         registeredSessionId = undefined;
         ctx.ui.notify("Slackoff control moved to another process for this session", "warning");
         rejectPendingAnswers(new Error("Slackoff control moved to another process"), message.sessionId);
@@ -228,6 +238,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       }
       return;
     }
+
 
     if (!ctx.isIdle()) ctx.abort();
   };

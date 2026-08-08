@@ -1,13 +1,15 @@
-import type { KnownBlock } from "@slack/types";
+import type { Button, KnownBlock } from "@slack/types";
 
 import type { SessionDescriptor, SessionStatus } from "../protocol.js";
 
 export const STOP_ACTION = "slackoff_stop";
+export const CLOSE_THREAD_ACTION = "slackoff_close_thread";
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
   idle: "⚪ Ready",
   working: "🔵 Working",
   waiting: "🟡 Waiting for you",
+  stopping: "🟠 Stopping",
   done: "🟢 Done",
   error: "🔴 Error",
   offline: "⚫ Offline",
@@ -18,6 +20,7 @@ const STATUS_ICONS: Record<SessionStatus, string> = {
   idle: "⚪",
   working: "🔵",
   waiting: "🟡",
+  stopping: "🟠",
   done: "🟢",
   error: "🔴",
   offline: "⚫",
@@ -51,25 +54,36 @@ export function buildSessionBlocks(
     },
   ];
 
-  if (status === "working" || status === "waiting") {
-    blocks.push({
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          action_id: STOP_ACTION,
-          text: { type: "plain_text", text: "Stop", emoji: false },
-          value: bindingId,
-          style: "danger",
-          confirm: {
-            title: { type: "plain_text", text: "Stop this OMP turn?", emoji: false },
-            text: { type: "mrkdwn", text: "This stops only the active turn for this OMP session." },
-            confirm: { type: "plain_text", text: "Stop", emoji: false },
-            deny: { type: "plain_text", text: "Keep running", emoji: false },
-          },
+  if (status !== "offline" && status !== "disabled") {
+    const elements: Button[] = [];
+    if (status === "working" || status === "waiting") {
+      elements.push({
+        type: "button",
+        action_id: STOP_ACTION,
+        text: { type: "plain_text", text: "Stop turn", emoji: false },
+        value: bindingId,
+        confirm: {
+          title: { type: "plain_text", text: "Stop the active OMP turn?", emoji: false },
+          text: { type: "mrkdwn", text: "The Slack thread stays connected for your next instruction." },
+          confirm: { type: "plain_text", text: "Stop turn", emoji: false },
+          deny: { type: "plain_text", text: "Keep running", emoji: false },
         },
-      ],
+      });
+    }
+    elements.push({
+      type: "button",
+      action_id: CLOSE_THREAD_ACTION,
+      text: { type: "plain_text", text: "Close thread", emoji: false },
+      value: bindingId,
+      style: "danger",
+      confirm: {
+        title: { type: "plain_text", text: "Close this Slack thread?", emoji: false },
+        text: { type: "mrkdwn", text: "Slackoff will be disabled for this OMP session until you turn it on again." },
+        confirm: { type: "plain_text", text: "Close thread", emoji: false },
+        deny: { type: "plain_text", text: "Keep open", emoji: false },
+      },
     });
+    blocks.push({ type: "actions", elements });
   }
 
   return blocks;
@@ -81,7 +95,7 @@ export function buildCollapsedSessionBlocks(session: SessionDescriptor): KnownBl
   return [
     {
       type: "context",
-      elements: [{ type: "mrkdwn", text: `⚫ *${title}* · Stopped · ${project}` }],
+      elements: [{ type: "mrkdwn", text: `⚫ *${title}* · Closed · ${project}` }],
     },
   ];
 }

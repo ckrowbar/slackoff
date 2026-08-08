@@ -13,7 +13,13 @@ import {
   type SessionStatus,
   type SlackBinding,
 } from "../protocol.js";
-import { buildCollapsedSessionBlocks, buildSessionBlocks, escapeMrkdwn, STOP_ACTION } from "./blocks.js";
+import {
+  buildCollapsedSessionBlocks,
+  buildSessionBlocks,
+  CLOSE_THREAD_ACTION,
+  escapeMrkdwn,
+  STOP_ACTION,
+} from "./blocks.js";
 import type { ActiveSession } from "./registry.js";
 import { SessionRegistry } from "./registry.js";
 
@@ -40,6 +46,7 @@ export class SlackController {
   readonly #registry: SessionRegistry;
   readonly #seenEvents = new Map<string, number>();
   readonly #rootRefreshTimers = new Map<string, NodeJS.Timeout>();
+  readonly #closedBindings = new Set<string>();
 
   constructor(config: DaemonConfig, registry: SessionRegistry) {
     this.#config = config;
@@ -68,7 +75,7 @@ export class SlackController {
   }
 
   async ensureBinding(session: SessionDescriptor, binding: SlackBinding | undefined): Promise<SlackBinding> {
-    if (binding) {
+    if (binding && !this.#closedBindings.delete(binding.bindingId)) {
       try {
         await this.#app.client.chat.update({
           channel: binding.channelId,
@@ -101,7 +108,7 @@ export class SlackController {
       channel: record.binding.channelId,
       ts: record.binding.threadTs,
       text: record.collapsed
-        ? `${record.session.title} · Stopped`
+        ? `${record.session.title} · Closed`
         : `${record.session.title} · ${record.activity ?? record.status}`,
       blocks: record.collapsed
         ? buildCollapsedSessionBlocks(record.session)
@@ -223,7 +230,17 @@ export class SlackController {
       if (!parsedBody.success || !parsedAction.success || parsedBody.data.user.id !== this.#config.userId) return;
       const record = this.#registry.getByBindingId(parsedAction.data.value);
       if (!record) return;
-      await this.stopSession(record);
+      await this.stopTurn(record);
+    });
+
+    this.#app.action(CLOSE_THREAD_ACTION, async ({ ack, body, action }) => {
+      await ack();
+      const parsedBody = ActionBodySchema.safeParse(body);
+      const parsedAction = ActionValueSchema.safeParse(action);
+      if (!parsedBody.success || !parsedAction.success || parsedBody.data.user.id !== this.#config.userId) return;
+      const record = this.#registry.getByBindingId(parsedAction.data.value);
+      if (!record) return;
+      await this.closeSession(record);
     });
 
     
@@ -268,6 +285,7 @@ export class SlackController {
   }
 
   async routeInstruction(record: ActiveSession, text: string): Promise<void> {
+    if (record.collapsed || record.status === "disabled") return;
     if (!record.socket) {
       await this.#app.client.chat.postMessage({
         channel: record.binding.channelId,
@@ -286,15 +304,32 @@ export class SlackController {
     );
   }
 
-  async stopSession(record: ActiveSession): Promise<void> {
-    record.collapsed = true;
-    record.status = "done";
-    record.activity = undefined;
+  async stopTurn(record: ActiveSession): Promise<void> {
+    record.collapsed = false;
+    record.status = "stopping";
+    record.activity = "Stopping active turn";
+    if (record.socket) {
+      record.socket.write(
+        encodeMessage({ type: "stop", sessionId: record.session.id, commandId: randomUUID() }),
+      );
+    }
     await this.refreshRoot(record);
-    if (!record.socket) return;
-    record.socket.write(
-      encodeMessage({ type: "stop", sessionId: record.session.id, commandId: randomUUID() }),
-    );
+  }
+
+  async closeSession(record: ActiveSession): Promise<void> {
+    record.collapsed = true;
+    record.status = "disabled";
+    record.activity = undefined;
+    this.#closedBindings.add(record.binding.bindingId);
+    if (record.socket) {
+      record.socket.write(
+        encodeMessage({ type: "stop", sessionId: record.session.id, commandId: randomUUID() }),
+      );
+      record.socket.write(
+        encodeMessage({ type: "replaced", sessionId: record.session.id, reason: "closed" }),
+      );
+    }
+    await this.refreshRoot(record);
   }
 
   #isDuplicateEvent(eventId: string): boolean {

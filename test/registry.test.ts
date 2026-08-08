@@ -39,6 +39,7 @@ test("disabled registration remains addressable but cannot receive commands", ()
 
   assert.equal(record?.status, "disabled");
   assert.equal(record?.socket, undefined);
+  assert.equal(record?.collapsed, true);
   assert.equal(registry.getByThread("D123", "100.200"), record);
 });
 
@@ -75,4 +76,20 @@ test("re-registering a session restores its existing thread binding", () => {
   assert.equal(restored.status, "idle");
   assert.equal(restored.collapsed, false);
   assert.equal(restored.socket, secondSocket);
+});
+
+test("registering after closure moves the session to a new thread", () => {
+  const registry = new SessionRegistry();
+  const firstSocket = new Socket();
+  const secondSocket = new Socket();
+  const first = registry.register(session, binding, firstSocket).record;
+  registry.unregister(session.id, firstSocket, "disabled");
+  const nextBinding = { bindingId: "binding-2", channelId: "D123", threadTs: "300.400" };
+
+  const reopened = registry.register(session, nextBinding, secondSocket).record;
+
+  assert.equal(reopened, first);
+  assert.equal(reopened.collapsed, false);
+  assert.equal(registry.getByThread("D123", "100.200"), undefined);
+  assert.equal(registry.getByThread("D123", "300.400"), reopened);
 });

@@ -35,6 +35,16 @@ test("rejects an instruction without a command identifier", () => {
   assert.equal(result.success, false);
 });
 
+test("accepts a closed-session replacement notice", () => {
+  const result = ServerMessageSchema.safeParse({
+    type: "replaced",
+    sessionId: "session-1",
+    reason: "closed",
+  });
+
+  assert.equal(result.success, true);
+});
+
 test("accepts a bounded Slack question request", () => {
   const result = ClientMessageSchema.safeParse({
     type: "question",

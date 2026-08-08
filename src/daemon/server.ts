@@ -104,7 +104,7 @@ export class SlackoffDaemon {
           const binding = await this.#slack.ensureBinding(message.session, message.binding);
           const { record, replacedSocket } = this.#registry.register(message.session, binding, socket);
           if (replacedSocket) {
-            replacedSocket.write(encodeMessage({ type: "replaced", sessionId: message.session.id }));
+            replacedSocket.write(encodeMessage({ type: "replaced", sessionId: message.session.id, reason: "lease" }));
           }
           if (replacedSocket && record.pendingQuestion) {
             await this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, "idle");

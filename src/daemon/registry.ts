@@ -68,6 +68,7 @@ export class SessionRegistry {
     record.socket = undefined;
     record.status = status;
     record.activity = undefined;
+    record.collapsed = status === "disabled";
     return record;
   }
 
