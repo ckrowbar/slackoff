@@ -34,3 +34,42 @@ test("rejects an instruction without a command identifier", () => {
 
   assert.equal(result.success, false);
 });
+
+test("accepts a bounded Slack question request", () => {
+  const result = ClientMessageSchema.safeParse({
+    type: "question",
+    requestId: "request-2",
+    sessionId: "session-1",
+    questionId: "question-1",
+    prompt: "Which direction should I take?",
+    options: [{ label: "Minimal fix" }, { label: "Broader refactor", description: "Clean up adjacent code." }],
+    multi: false,
+  });
+
+  assert.equal(result.success, true);
+});
+
+test("rejects a Slack question with too many options", () => {
+  const result = ClientMessageSchema.safeParse({
+    type: "question",
+    requestId: "request-2",
+    sessionId: "session-1",
+    questionId: "question-1",
+    prompt: "Choose one",
+    options: Array.from({ length: 6 }, (_, index) => ({ label: `Option ${index + 1}` })),
+    multi: false,
+  });
+
+  assert.equal(result.success, false);
+});
+
+test("accepts a native thread reply as a question answer", () => {
+  const result = ServerMessageSchema.safeParse({
+    type: "question_answer",
+    sessionId: "session-1",
+    questionId: "question-1",
+    answer: "Minimal fix",
+  });
+
+  assert.equal(result.success, true);
+});

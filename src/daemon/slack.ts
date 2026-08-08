@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
 
 import { App, LogLevel } from "@slack/bolt";
+import type { KnownBlock } from "@slack/types";
 import type { WebClient } from "@slack/web-api";
 import { z } from "zod";
 
 import type { DaemonConfig } from "../config.js";
-import { encodeMessage, type CommandAcknowledgement, type SessionDescriptor, type SlackBinding } from "../protocol.js";
+import {
+  encodeMessage,
+  type CommandAcknowledgement,
+  type QuestionRequest,
+  type SessionDescriptor,
+  type SessionStatus,
+  type SlackBinding,
+} from "../protocol.js";
 import {
   buildInstructionModal,
   buildSessionBlocks,
@@ -166,6 +174,56 @@ export class SlackController {
     feedback.completed = acknowledgement.state === "failed" || acknowledgement.state === "stopped" || acknowledgement.state === "ignored";
   }
 
+  async postQuestion(record: ActiveSession, question: QuestionRequest): Promise<void> {
+    if (!record.socket) throw new Error("OMP session is offline");
+    if (record.pendingQuestion) throw new Error("OMP session is already waiting for an answer");
+
+    const result = await this.#app.client.chat.postMessage({
+      channel: record.binding.channelId,
+      thread_ts: record.binding.threadTs,
+      text: `Question: ${question.prompt}`,
+      blocks: buildQuestionBlocks(question.prompt, question.options, question.multi, "waiting"),
+    });
+    if (!result.ts) throw new Error("Slack did not return a question message timestamp");
+
+    record.pendingQuestion = {
+      questionId: question.questionId,
+      messageTs: result.ts,
+      prompt: question.prompt,
+      multi: question.multi,
+      options: question.options.map((option) => option.label),
+    };
+    record.status = "waiting";
+    record.activity = "Waiting for your reply in Slack";
+    record.lastActivity = new Date();
+    await this.refreshRoot(record);
+  }
+
+  async cancelQuestion(
+    record: ActiveSession,
+    questionId: string,
+    nextStatus: SessionStatus = "working",
+  ): Promise<void> {
+    const pending = record.pendingQuestion;
+    if (!pending || pending.questionId !== questionId) return;
+    record.pendingQuestion = undefined;
+    await this.#app.client.chat.update({
+      channel: record.binding.channelId,
+      ts: pending.messageTs,
+      text: `Cancelled question: ${pending.prompt}`,
+      blocks: buildQuestionBlocks(
+        pending.prompt,
+        pending.options.map((label) => ({ label })),
+        pending.multi,
+        "cancelled",
+      ),
+    });
+    record.status = nextStatus;
+    record.activity = nextStatus === "working" ? "Question cancelled" : undefined;
+    record.lastActivity = new Date();
+    await this.refreshRoot(record);
+  }
+
   #registerHandlers(): void {
     this.#app.event("message", async ({ event, body }) => {
       const eventId = "event_id" in body && typeof body.event_id === "string" ? body.event_id : undefined;
@@ -189,6 +247,7 @@ export class SlackController {
 
       const record = this.#registry.getByThread(message.channel, message.thread_ts);
       if (!record) return;
+      if (await this.#routeQuestionAnswer(record, message.text)) return;
       await this.#routeInstruction(record, message.text);
     });
 
@@ -225,6 +284,45 @@ export class SlackController {
       if (!text) return;
       await this.#routeInstruction(record, text, true);
     });
+  }
+
+  async #routeQuestionAnswer(record: ActiveSession, answer: string): Promise<boolean> {
+    const pending = record.pendingQuestion;
+    if (!pending) return false;
+    if (!record.socket) {
+      await this.#app.client.chat.postMessage({
+        channel: record.binding.channelId,
+        thread_ts: record.binding.threadTs,
+        text: "Session offline; answer was not delivered.",
+      });
+      return true;
+    }
+
+    record.socket.write(
+      encodeMessage({
+        type: "question_answer",
+        sessionId: record.session.id,
+        questionId: pending.questionId,
+        answer,
+      }),
+    );
+    record.pendingQuestion = undefined;
+    await this.#app.client.chat.update({
+      channel: record.binding.channelId,
+      ts: pending.messageTs,
+      text: `Answered question: ${pending.prompt}`,
+      blocks: buildQuestionBlocks(
+        pending.prompt,
+        pending.options.map((label) => ({ label })),
+        pending.multi,
+        "answered",
+      ),
+    });
+    record.status = "working";
+    record.activity = "Reply received";
+    record.lastActivity = new Date();
+    await this.refreshRoot(record);
+    return true;
   }
 
   async #routeInstruction(record: ActiveSession, text: string, mirrorInstruction = false): Promise<void> {
@@ -310,6 +408,39 @@ export class SlackController {
     this.#seenEvents.set(eventId, now + 30 * 60_000);
     return false;
   }
+}
+
+type QuestionState = "waiting" | "answered" | "cancelled";
+
+function buildQuestionBlocks(
+  prompt: string,
+  options: Array<{ label: string; description?: string | undefined }>,
+  multi: boolean,
+  state: QuestionState,
+): KnownBlock[] {
+  const stateText: Record<QuestionState, string> = {
+    waiting: multi ? "Reply in this thread with one or more choices." : "Reply in this thread with your choice.",
+    answered: "Answered in this thread.",
+    cancelled: "Question cancelled.",
+  };
+  const optionLines = options.map((option, index) => {
+    const description = option.description ? ` — ${escapeMrkdwn(option.description)}` : "";
+    return `${index + 1}. *${escapeMrkdwn(option.label)}*${description}`;
+  });
+  return [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `*OMP needs your input*\n${escapeMrkdwn(prompt)}` },
+    },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: optionLines.join("\n") },
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: stateText[state] }],
+    },
+  ];
 }
 
 function formatActivityTime(date: Date): string {

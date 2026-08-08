@@ -8,6 +8,14 @@ export interface FeedbackRecord {
   completed: boolean;
 }
 
+export interface PendingQuestion {
+  questionId: string;
+  messageTs: string;
+  prompt: string;
+  multi: boolean;
+  options: string[];
+}
+
 export interface ActiveSession {
   session: SessionDescriptor;
   binding: SlackBinding;
@@ -17,6 +25,7 @@ export interface ActiveSession {
   lastActivity: Date;
   feedback: Map<string, FeedbackRecord>;
   lastCommandId: string | undefined;
+  pendingQuestion: PendingQuestion | undefined;
 }
 
 export interface RegistrationResult {
@@ -48,6 +57,7 @@ export class SessionRegistry {
       lastActivity: new Date(),
       feedback: new Map(),
       lastCommandId: undefined,
+      pendingQuestion: undefined,
     };
     record.session = session;
     record.binding = binding;

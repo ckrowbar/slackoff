@@ -57,6 +57,27 @@ const CommandAcknowledgementSchema = z.object({
   detail: z.string().optional(),
 });
 
+const QuestionOptionSchema = z.object({
+  label: z.string().min(1).max(75),
+  description: z.string().min(1).max(150).optional(),
+});
+
+const QuestionRequestSchema = z.object({
+  type: z.literal("question"),
+  requestId: z.string().min(1),
+  sessionId: z.string().min(1),
+  questionId: z.string().min(1),
+  prompt: z.string().min(1).max(3_000),
+  options: z.array(QuestionOptionSchema).min(2).max(5),
+  multi: z.boolean(),
+});
+
+const CancelQuestionMessageSchema = z.object({
+  type: z.literal("cancel_question"),
+  sessionId: z.string().min(1),
+  questionId: z.string().min(1),
+});
+
 const PingMessageSchema = z.object({
   type: z.literal("ping"),
   requestId: z.string().min(1),
@@ -68,6 +89,8 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   StatusMessageSchema,
   TranscriptMessageSchema,
   CommandAcknowledgementSchema,
+  QuestionRequestSchema,
+  CancelQuestionMessageSchema,
   PingMessageSchema,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
@@ -76,6 +99,8 @@ export type UnregisterMessage = z.infer<typeof UnregisterMessageSchema>;
 export type StatusMessage = z.infer<typeof StatusMessageSchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
 export type CommandAcknowledgement = z.infer<typeof CommandAcknowledgementSchema>;
+export type QuestionRequest = z.infer<typeof QuestionRequestSchema>;
+export type CancelQuestionMessage = z.infer<typeof CancelQuestionMessageSchema>;
 
 const ResponseMessageSchema = z.object({
   type: z.literal("response"),
@@ -103,16 +128,25 @@ const ReplacedMessageSchema = z.object({
   sessionId: z.string().min(1),
 });
 
+const QuestionAnswerMessageSchema = z.object({
+  type: z.literal("question_answer"),
+  sessionId: z.string().min(1),
+  questionId: z.string().min(1),
+  answer: z.string().min(1),
+});
+
 export const ServerMessageSchema = z.discriminatedUnion("type", [
   ResponseMessageSchema,
   InstructionMessageSchema,
   StopMessageSchema,
   ReplacedMessageSchema,
+  QuestionAnswerMessageSchema,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
 export type ResponseMessage = z.infer<typeof ResponseMessageSchema>;
 export type InstructionMessage = z.infer<typeof InstructionMessageSchema>;
 export type StopMessage = z.infer<typeof StopMessageSchema>;
+export type QuestionAnswerMessage = z.infer<typeof QuestionAnswerMessageSchema>;
 
 export function encodeMessage(message: ClientMessage | ServerMessage): string {
   return `${JSON.stringify(message)}\n`;

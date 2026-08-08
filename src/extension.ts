@@ -27,12 +27,48 @@ const TOOL_ACTIVITY: Record<string, string> = {
   ask: "Waiting for input",
 };
 
+interface SlackQuestion {
+  id: string;
+  question: string;
+  options: Array<{ label: string; description?: string | undefined }>;
+  multi?: boolean | undefined;
+}
+
+interface PendingSlackAnswer {
+  sessionId: string;
+  resolve: (answer: string) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+}
+
 export default function slackoffExtension(pi: ExtensionAPI): void {
+  const slackAskParameters = pi.zod.object({
+    questions: pi.zod
+      .array(
+        pi.zod.object({
+          id: pi.zod.string().min(1),
+          question: pi.zod.string().min(1),
+          options: pi.zod
+            .array(
+              pi.zod.object({
+                label: pi.zod.string().min(1),
+                description: pi.zod.string().optional(),
+              }),
+            )
+            .min(2)
+            .max(5),
+          multi: pi.zod.boolean().optional(),
+        }),
+      )
+      .min(1),
+  });
   let currentContext: ExtensionContext | undefined;
   let currentState: SessionState = { version: 1, enabled: false };
   let client: BridgeClient | undefined;
   let registeredSessionId: string | undefined;
   let registration: Promise<void> | undefined;
+  const pendingAnswers = new Map<string, PendingSlackAnswer>();
+  let replacedNativeAsk = false;
 
   const reportError = (error: Error): void => {
     pi.logger.error("Slackoff extension error", {
@@ -46,6 +82,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     if (client) return client;
     client = new BridgeClient(loadClientConfig(), reportError);
     client.onMessage((message) => handleServerMessage(message));
+    client.onDisconnect((error) => rejectPendingAnswers(error));
     return client;
   };
 
@@ -63,6 +100,31 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       occurredAt: new Date().toISOString(),
       ...(activity ? { activity } : {}),
     });
+  };
+
+  const enableSlackAsk = async (): Promise<void> => {
+    const activeTools = pi.getActiveTools();
+    if (activeTools.includes("ask")) replacedNativeAsk = true;
+    const nextTools = activeTools.filter((name) => name !== "ask");
+    if (!nextTools.includes("slack_ask")) nextTools.push("slack_ask");
+    if (nextTools.join("\n") !== activeTools.join("\n")) await pi.setActiveTools(nextTools);
+  };
+
+  const disableSlackAsk = async (): Promise<void> => {
+    const activeTools = pi.getActiveTools();
+    const nextTools = activeTools.filter((name) => name !== "slack_ask");
+    if (replacedNativeAsk && !nextTools.includes("ask")) nextTools.push("ask");
+    replacedNativeAsk = false;
+    if (nextTools.join("\n") !== activeTools.join("\n")) await pi.setActiveTools(nextTools);
+  };
+
+  const rejectPendingAnswers = (error: Error, sessionId?: string): void => {
+    for (const [questionId, pending] of pendingAnswers) {
+      if (sessionId && pending.sessionId !== sessionId) continue;
+      clearTimeout(pending.timeout);
+      pendingAnswers.delete(questionId);
+      pending.reject(error);
+    }
   };
 
   const activate = async (ctx: ExtensionContext, resetBinding = false): Promise<void> => {
@@ -88,6 +150,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       const bindingChanged = currentState.binding?.bindingId !== response.binding.bindingId;
       currentState = { version: 1, enabled: true, binding: response.binding };
       if (bindingChanged || resetBinding) persistState();
+      await enableSlackAsk();
       sendStatus(ctx.isIdle() ? "idle" : "working", ctx.isIdle() ? undefined : "Resumed work");
     })().finally(() => {
       registration = undefined;
@@ -96,9 +159,15 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
   };
 
   const deactivate = (reason: "offline" | "disabled" | "switch"): void => {
-    if (registeredSessionId && client?.connected) {
-      client.send({ type: "unregister", sessionId: registeredSessionId, reason });
+    const sessionId = registeredSessionId;
+    if (sessionId && client?.connected) {
+      for (const [questionId, pending] of pendingAnswers) {
+        if (pending.sessionId !== sessionId) continue;
+        client.send({ type: "cancel_question", sessionId, questionId });
+      }
+      client.send({ type: "unregister", sessionId, reason });
     }
+    if (sessionId) rejectPendingAnswers(new Error(`Slackoff session ${reason}`), sessionId);
     registeredSessionId = undefined;
   };
 
@@ -119,10 +188,21 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       if (message.sessionId === registeredSessionId) {
         registeredSessionId = undefined;
         ctx.ui.notify("Slackoff control moved to another process for this session", "warning");
+        rejectPendingAnswers(new Error("Slackoff control moved to another process"), message.sessionId);
       }
       return;
     }
     if (message.sessionId !== registeredSessionId) return;
+
+    if (message.type === "question_answer") {
+      const pending = pendingAnswers.get(message.questionId);
+      if (!pending || pending.sessionId !== message.sessionId) return;
+      clearTimeout(pending.timeout);
+      pendingAnswers.delete(message.questionId);
+      pending.resolve(message.answer);
+      sendStatus("working", "Slack reply received");
+      return;
+    }
 
     if (message.type === "instruction") {
       try {
@@ -165,6 +245,97 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     });
   };
 
+  const askThroughSlack = async (
+    ctx: ExtensionContext,
+    question: SlackQuestion,
+    signal: AbortSignal | undefined,
+  ): Promise<string> => {
+    await activate(ctx);
+    const sessionId = registeredSessionId;
+    if (!sessionId) throw new Error("Slackoff session is not registered");
+
+    const questionId = randomUUID();
+    let posted = false;
+    let answered = false;
+    let timeout: NodeJS.Timeout | undefined;
+    let abort: (() => void) | undefined;
+    try {
+      const response = await getClient().request({
+        type: "question",
+        requestId: randomUUID(),
+        sessionId,
+        questionId,
+        prompt: question.question,
+        options: question.options,
+        multi: question.multi ?? false,
+      });
+      if (!response.ok) throw new Error(response.error ?? "Slack question could not be posted");
+      posted = true;
+
+      const deferred = Promise.withResolvers<string>();
+      timeout = setTimeout(
+        () => deferred.reject(new Error("Slack question timed out after 30 minutes")),
+        30 * 60_000,
+      );
+      timeout.unref();
+      pendingAnswers.set(questionId, {
+        sessionId,
+        resolve: deferred.resolve,
+        reject: deferred.reject,
+        timeout,
+      });
+      abort = () => deferred.reject(new Error("Slack question cancelled"));
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+
+      const answer = await deferred.promise;
+      answered = true;
+      return answer;
+    } finally {
+      if (abort) signal?.removeEventListener("abort", abort);
+      clearTimeout(timeout);
+      pendingAnswers.delete(questionId);
+      if (posted && !answered && client?.connected) {
+        client.send({ type: "cancel_question", sessionId, questionId });
+      }
+    }
+  };
+
+  pi.registerTool({
+    name: "slack_ask",
+    label: "Ask via Slack",
+    description:
+      "Ask the user a clarifying question in the active Slackoff session thread and wait for their reply. Use this instead of ask whenever it is available.",
+    parameters: slackAskParameters,
+    approval: "read",
+    loadMode: "essential",
+    defaultInactive: true,
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const results = [];
+      try {
+        for (const question of params.questions) {
+          const answer = await askThroughSlack(ctx, question, signal);
+          results.push(buildQuestionResult(question, answer));
+        }
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: results.map((result) => `${result.question}\nAnswer: ${result.answer}`).join("\n\n"),
+          },
+        ],
+        details: { results },
+      };
+    },
+  });
+
   pi.registerCommand("slackoff", {
     description: "Manage this session's Slackoff DM thread (on|off|status)",
     handler: async (args, ctx) => {
@@ -179,6 +350,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       }
       if (action === "off") {
         deactivate("disabled");
+        await disableSlackAsk();
         currentState = { version: 1, enabled: false };
         persistState();
         ctx.ui.notify("Slackoff disabled for this session", "info");
@@ -212,6 +384,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     if (event.reason === "new") currentState = { version: 1, enabled: false };
     const resetBinding = event.reason === "fork" || event.reason === "handoff";
     if (currentState.enabled) await activate(ctx, resetBinding);
+    else await disableSlackAsk();
   });
 
   pi.on("session_branch", (_event, ctx) => {
@@ -250,6 +423,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", () => {
     deactivate("offline");
+    rejectPendingAnswers(new Error("Slackoff session shut down"));
     client?.disconnect();
     currentContext = undefined;
   });
@@ -264,4 +438,36 @@ function extractAssistantText(message: MessageEndEvent["message"]): string | und
     .join("\n")
     .trim();
   return text || undefined;
+}
+
+function buildQuestionResult(question: SlackQuestion, answer: string): {
+  id: string;
+  question: string;
+  answer: string;
+  options: string[];
+  multi: boolean;
+  selectedOptions: string[];
+  customInput?: string;
+} {
+  const labels = question.options.map((option) => option.label);
+  const answerParts = question.multi ? answer.split(/[,\n]/).map((part) => part.trim()) : [answer.trim()];
+  const selectedOptions: string[] = [];
+  const customParts: string[] = [];
+  for (const part of answerParts) {
+    const numericIndex = /^\d+$/.test(part) ? Number(part) - 1 : -1;
+    const numericLabel = numericIndex >= 0 ? labels[numericIndex] : undefined;
+    const label = numericLabel ?? labels.find((candidate) => candidate.toLowerCase() === part.toLowerCase());
+    if (label) selectedOptions.push(label);
+    else if (part) customParts.push(part);
+  }
+  const customInput = customParts.join(", ");
+  return {
+    id: question.id,
+    question: question.question,
+    answer,
+    options: labels,
+    multi: question.multi ?? false,
+    selectedOptions,
+    ...(customInput ? { customInput } : {}),
+  };
 }

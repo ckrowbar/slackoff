@@ -20,6 +20,7 @@ interface PendingRequest {
 export class BridgeClient {
   readonly #config: ClientConfig;
   readonly #listeners = new Set<(message: ServerMessage) => void>();
+  readonly #disconnectListeners = new Set<(error: Error) => void>();
   readonly #pending = new Map<string, PendingRequest>();
   readonly #onError: (error: Error) => void;
   #socket: Socket | undefined;
@@ -38,6 +39,11 @@ export class BridgeClient {
   onMessage(listener: (message: ServerMessage) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  onDisconnect(listener: (error: Error) => void): () => void {
+    this.#disconnectListeners.add(listener);
+    return () => this.#disconnectListeners.delete(listener);
   }
 
   async ensureConnected(): Promise<void> {
@@ -144,8 +150,11 @@ export class BridgeClient {
     socket.on("data", (chunk: string) => this.#consume(chunk));
     socket.on("error", (error) => this.#onError(error));
     socket.on("close", () => {
-      if (this.#socket === socket) this.#socket = undefined;
-      this.#rejectPending(new Error("Slackoff daemon disconnected"));
+      if (this.#socket !== socket) return;
+      this.#socket = undefined;
+      const error = new Error("Slackoff daemon disconnected");
+      this.#rejectPending(error);
+      for (const listener of this.#disconnectListeners) listener(error);
     });
   }
 

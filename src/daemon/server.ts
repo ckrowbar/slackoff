@@ -89,7 +89,10 @@ export class SlackoffDaemon {
     socket.on("close", () => {
       this.#connections.delete(socket);
       for (const record of this.#registry.disconnect(socket)) {
-        void this.#slack.refreshRoot(record).catch((error) => console.error("Slackoff offline update failed", error));
+        const update = record.pendingQuestion
+          ? this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, "offline")
+          : this.#slack.refreshRoot(record);
+        void update.catch((error) => console.error("Slackoff offline update failed", error));
       }
     });
   }
@@ -102,6 +105,9 @@ export class SlackoffDaemon {
           const { record, replacedSocket } = this.#registry.register(message.session, binding, socket);
           if (replacedSocket) {
             replacedSocket.write(encodeMessage({ type: "replaced", sessionId: message.session.id }));
+          }
+          if (replacedSocket && record.pendingQuestion) {
+            await this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, "idle");
           }
           this.#respond(socket, { type: "response", requestId: message.requestId, ok: true, binding });
           await this.#slack.refreshRoot(record);
@@ -118,7 +124,8 @@ export class SlackoffDaemon {
       case "unregister": {
         const status = message.reason === "disabled" ? "disabled" : "offline";
         const record = this.#registry.unregister(message.sessionId, socket, status);
-        if (record) await this.#slack.refreshRoot(record);
+        if (record?.pendingQuestion) await this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, status);
+        else if (record) await this.#slack.refreshRoot(record);
         return;
       }
       case "status": {
@@ -140,6 +147,36 @@ export class SlackoffDaemon {
         const record = this.#registry.getBySessionId(message.sessionId);
         if (!record || record.socket !== socket) return;
         await this.#slack.applyCommandAcknowledgement(record, message);
+        return;
+      }
+      case "question": {
+        const record = this.#registry.getBySessionId(message.sessionId);
+        if (!record || record.socket !== socket) {
+          this.#respond(socket, {
+            type: "response",
+            requestId: message.requestId,
+            ok: false,
+            error: "OMP session is not registered on this connection",
+          });
+          return;
+        }
+        try {
+          await this.#slack.postQuestion(record, message);
+          this.#respond(socket, { type: "response", requestId: message.requestId, ok: true });
+        } catch (error) {
+          this.#respond(socket, {
+            type: "response",
+            requestId: message.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return;
+      }
+      case "cancel_question": {
+        const record = this.#registry.getBySessionId(message.sessionId);
+        if (!record || record.socket !== socket) return;
+        await this.#slack.cancelQuestion(record, message.questionId);
         return;
       }
       case "ping":
