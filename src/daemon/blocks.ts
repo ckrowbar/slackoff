@@ -75,6 +75,17 @@ export function buildSessionBlocks(
   return blocks;
 }
 
+export function buildCollapsedSessionBlocks(session: SessionDescriptor): KnownBlock[] {
+  const title = escapeMrkdwn(truncate(session.title, 150));
+  const project = escapeMrkdwn(truncate(session.project || "Unknown", 150));
+  return [
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: `⚫ *${title}* · Stopped · ${project}` }],
+    },
+  ];
+}
+
 
 export function escapeMrkdwn(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");

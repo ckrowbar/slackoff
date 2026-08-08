@@ -8,14 +8,13 @@ import { z } from "zod";
 import type { DaemonConfig } from "../config.js";
 import {
   encodeMessage,
-  type CommandAcknowledgement,
   type QuestionRequest,
   type SessionDescriptor,
   type SessionStatus,
   type SlackBinding,
 } from "../protocol.js";
-import { buildSessionBlocks, escapeMrkdwn, STOP_ACTION } from "./blocks.js";
-import type { ActiveSession, FeedbackRecord } from "./registry.js";
+import { buildCollapsedSessionBlocks, buildSessionBlocks, escapeMrkdwn, STOP_ACTION } from "./blocks.js";
+import type { ActiveSession } from "./registry.js";
 import { SessionRegistry } from "./registry.js";
 
 const DmMessageSchema = z.object({
@@ -40,7 +39,6 @@ export class SlackController {
   readonly #config: DaemonConfig;
   readonly #registry: SessionRegistry;
   readonly #seenEvents = new Map<string, number>();
-  readonly #workingTimers = new Map<string, NodeJS.Timeout>();
   readonly #rootRefreshTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(config: DaemonConfig, registry: SessionRegistry) {
@@ -64,10 +62,8 @@ export class SlackController {
   }
 
   async stop(): Promise<void> {
-    for (const timer of this.#workingTimers.values()) clearTimeout(timer);
     for (const timer of this.#rootRefreshTimers.values()) clearTimeout(timer);
     this.#rootRefreshTimers.clear();
-    this.#workingTimers.clear();
     await this.#app.stop();
   }
 
@@ -104,20 +100,14 @@ export class SlackController {
     await this.#app.client.chat.update({
       channel: record.binding.channelId,
       ts: record.binding.threadTs,
-      text: `${record.session.title} · ${record.activity ?? record.status}`,
-      blocks: buildSessionBlocks(record.session, record.binding.bindingId, record.status, record.activity),
+      text: record.collapsed
+        ? `${record.session.title} · Stopped`
+        : `${record.session.title} · ${record.activity ?? record.status}`,
+      blocks: record.collapsed
+        ? buildCollapsedSessionBlocks(record.session)
+        : buildSessionBlocks(record.session, record.binding.bindingId, record.status, record.activity),
     });
 
-    const priorTimer = this.#workingTimers.get(record.session.id);
-    clearTimeout(priorTimer);
-    this.#workingTimers.delete(record.session.id);
-    if (record.status !== "working" || !record.lastCommandId) return;
-
-    const timer = setTimeout(() => {
-      void this.#markStillWorking(record).catch((error) => console.error("Slackoff feedback update failed", error));
-    }, 20_000);
-    timer.unref();
-    this.#workingTimers.set(record.session.id, timer);
   }
 
   scheduleRootRefresh(record: ActiveSession): void {
@@ -131,7 +121,6 @@ export class SlackController {
   }
 
   async postTranscript(record: ActiveSession, role: "user" | "assistant", text: string): Promise<void> {
-    if (role === "assistant") await this.#completeLatestFeedback(record);
     const label = role === "user" ? "Local instruction" : "OMP";
 
     for (const chunk of splitText(text, 2_800)) {
@@ -149,20 +138,6 @@ export class SlackController {
     }
   }
 
-  async applyCommandAcknowledgement(record: ActiveSession, acknowledgement: CommandAcknowledgement): Promise<void> {
-    const feedback = record.feedback.get(acknowledgement.commandId);
-    if (!feedback || feedback.completed) return;
-
-    const textByState: Record<CommandAcknowledgement["state"], string> = {
-      delivered: "Delivered to OMP; starting a turn.",
-      queued: "Queued for the current OMP session.",
-      stopped: "OMP turn stopped.",
-      ignored: "No active OMP turn to stop.",
-      failed: acknowledgement.detail ? `Delivery failed: ${acknowledgement.detail}` : "Delivery failed.",
-    };
-    await this.#updateFeedback(record, feedback, textByState[acknowledgement.state]);
-    feedback.completed = acknowledgement.state === "failed" || acknowledgement.state === "stopped" || acknowledgement.state === "ignored";
-  }
 
   async postQuestion(record: ActiveSession, question: QuestionRequest): Promise<void> {
     if (!record.socket) throw new Error("OMP session is offline");
@@ -236,7 +211,7 @@ export class SlackController {
       const record = this.#registry.getByThread(message.channel, message.thread_ts);
       if (!record) return;
       if (await this.#routeQuestionAnswer(record, message.text)) return;
-      await this.#routeInstruction(record, message.text);
+      await this.routeInstruction(record, message.text);
     });
 
     
@@ -248,7 +223,7 @@ export class SlackController {
       if (!parsedBody.success || !parsedAction.success || parsedBody.data.user.id !== this.#config.userId) return;
       const record = this.#registry.getByBindingId(parsedAction.data.value);
       if (!record) return;
-      await this.#routeStop(record);
+      await this.stopSession(record);
     });
 
     
@@ -292,7 +267,7 @@ export class SlackController {
     return true;
   }
 
-  async #routeInstruction(record: ActiveSession, text: string): Promise<void> {
+  async routeInstruction(record: ActiveSession, text: string): Promise<void> {
     if (!record.socket) {
       await this.#app.client.chat.postMessage({
         channel: record.binding.channelId,
@@ -302,52 +277,24 @@ export class SlackController {
       return;
     }
 
-    const commandId = randomUUID();
-    const feedbackResult = await this.#app.client.chat.postMessage({
-      channel: record.binding.channelId,
-      thread_ts: record.binding.threadTs,
-      text: "Received by bridge; delivering to OMP…",
-    });
-    if (!feedbackResult.ts) throw new Error("Slack did not return a feedback message timestamp");
-    const feedback: FeedbackRecord = { commandId, messageTs: feedbackResult.ts, completed: false };
-    record.feedback.set(commandId, feedback);
-    record.lastCommandId = commandId;
-    record.socket.write(encodeMessage({ type: "instruction", sessionId: record.session.id, commandId, text }));
+    record.collapsed = false;
+    record.status = "working";
+    record.activity = "Instruction queued";
+    this.scheduleRootRefresh(record);
+    record.socket.write(
+      encodeMessage({ type: "instruction", sessionId: record.session.id, commandId: randomUUID(), text }),
+    );
   }
 
-  async #routeStop(record: ActiveSession): Promise<void> {
-    const commandId = randomUUID();
-    const feedbackResult = await this.#app.client.chat.postMessage({
-      channel: record.binding.channelId,
-      thread_ts: record.binding.threadTs,
-      text: record.socket ? "Stop requested…" : "Session is already offline.",
-    });
-    if (!record.socket || !feedbackResult.ts) return;
-    record.feedback.set(commandId, { commandId, messageTs: feedbackResult.ts, completed: false });
-    record.socket.write(encodeMessage({ type: "stop", sessionId: record.session.id, commandId }));
-  }
-
-  async #markStillWorking(record: ActiveSession): Promise<void> {
-    if (record.status !== "working" || !record.lastCommandId) return;
-    const feedback = record.feedback.get(record.lastCommandId);
-    if (!feedback || feedback.completed) return;
-    await this.#updateFeedback(record, feedback, "Still working…");
-  }
-
-  async #completeLatestFeedback(record: ActiveSession): Promise<void> {
-    if (!record.lastCommandId) return;
-    const feedback = record.feedback.get(record.lastCommandId);
-    if (!feedback || feedback.completed) return;
-    await this.#updateFeedback(record, feedback, "Completed.");
-    feedback.completed = true;
-  }
-
-  async #updateFeedback(record: ActiveSession, feedback: FeedbackRecord, text: string): Promise<void> {
-    await this.#app.client.chat.update({
-      channel: record.binding.channelId,
-      ts: feedback.messageTs,
-      text,
-    });
+  async stopSession(record: ActiveSession): Promise<void> {
+    record.collapsed = true;
+    record.status = "done";
+    record.activity = undefined;
+    await this.refreshRoot(record);
+    if (!record.socket) return;
+    record.socket.write(
+      encodeMessage({ type: "stop", sessionId: record.session.id, commandId: randomUUID() }),
+    );
   }
 
   #isDuplicateEvent(eventId: string): boolean {

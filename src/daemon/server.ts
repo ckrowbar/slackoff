@@ -142,12 +142,8 @@ export class SlackoffDaemon {
         await this.#slack.postTranscript(record, message.role, message.text);
         return;
       }
-      case "command_ack": {
-        const record = this.#registry.getBySessionId(message.sessionId);
-        if (!record || record.socket !== socket) return;
-        await this.#slack.applyCommandAcknowledgement(record, message);
+      case "command_ack":
         return;
-      }
       case "question": {
         const record = this.#registry.getBySessionId(message.sessionId);
         if (!record || record.socket !== socket) {

@@ -65,6 +65,7 @@ test("re-registering a session restores its existing thread binding", () => {
   const firstSocket = new Socket();
   const secondSocket = new Socket();
   const original = registry.register(session, binding, firstSocket).record;
+  original.collapsed = true;
   registry.disconnect(firstSocket);
 
   const restored = registry.register(session, binding, secondSocket).record;
@@ -72,5 +73,6 @@ test("re-registering a session restores its existing thread binding", () => {
   assert.equal(restored, original);
   assert.equal(restored.binding.threadTs, "100.200");
   assert.equal(restored.status, "idle");
+  assert.equal(restored.collapsed, false);
   assert.equal(restored.socket, secondSocket);
 });

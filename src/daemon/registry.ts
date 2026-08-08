@@ -2,11 +2,6 @@ import type { Socket } from "node:net";
 
 import type { SessionDescriptor, SessionStatus, SlackBinding } from "../protocol.js";
 
-export interface FeedbackRecord {
-  commandId: string;
-  messageTs: string;
-  completed: boolean;
-}
 
 export interface PendingQuestion {
   questionId: string;
@@ -22,8 +17,7 @@ export interface ActiveSession {
   socket: Socket | undefined;
   status: SessionStatus;
   activity: string | undefined;
-  feedback: Map<string, FeedbackRecord>;
-  lastCommandId: string | undefined;
+  collapsed: boolean;
   pendingQuestion: PendingQuestion | undefined;
 }
 
@@ -53,15 +47,15 @@ export class SessionRegistry {
       socket,
       status: "idle",
       activity: undefined,
-      feedback: new Map(),
-      lastCommandId: undefined,
       pendingQuestion: undefined,
+      collapsed: false,
     };
     record.session = session;
     record.binding = binding;
     record.socket = socket;
     record.status = "idle";
     record.activity = undefined;
+    record.collapsed = false;
 
     this.#bySessionId.set(session.id, record);
     this.#addIndexes(record);

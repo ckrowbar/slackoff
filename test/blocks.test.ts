@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSessionBlocks, STOP_ACTION } from "../src/daemon/blocks.js";
+import { buildCollapsedSessionBlocks, buildSessionBlocks, STOP_ACTION } from "../src/daemon/blocks.js";
 
 const session = { id: "session-123456789", title: "Fix parser", project: "project" };
 
@@ -20,6 +20,17 @@ test("completed session card shows Done without controls", () => {
   const serialized = JSON.stringify(blocks);
 
   assert.match(serialized, /🟢 Done/);
+  assert.doesNotMatch(serialized, new RegExp(STOP_ACTION));
+});
+
+test("stopped session card collapses to one context line", () => {
+  const blocks = buildCollapsedSessionBlocks(session);
+  const serialized = JSON.stringify(blocks);
+
+  assert.equal(blocks.length, 1);
+  assert.match(serialized, /Fix parser/);
+  assert.match(serialized, /Stopped/);
+  assert.match(serialized, /project/);
   assert.doesNotMatch(serialized, new RegExp(STOP_ACTION));
 });
 

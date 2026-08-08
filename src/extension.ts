@@ -222,41 +222,14 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       try {
         const wasIdle = ctx.isIdle();
         pi.sendUserMessage(message.text, wasIdle ? undefined : { deliverAs: "followUp" });
-        client?.send({
-          type: "command_ack",
-          sessionId: message.sessionId,
-          commandId: message.commandId,
-          state: wasIdle ? "delivered" : "queued",
-        });
         sendStatus("working", wasIdle ? "Starting turn" : "Instruction queued");
       } catch (error) {
-        client?.send({
-          type: "command_ack",
-          sessionId: message.sessionId,
-          commandId: message.commandId,
-          state: "failed",
-          detail: error instanceof Error ? error.message : String(error),
-        });
+        reportError(error instanceof Error ? error : new Error(String(error)));
       }
       return;
     }
 
-    if (ctx.isIdle()) {
-      client?.send({
-        type: "command_ack",
-        sessionId: message.sessionId,
-        commandId: message.commandId,
-        state: "ignored",
-      });
-      return;
-    }
-    ctx.abort();
-    client?.send({
-      type: "command_ack",
-      sessionId: message.sessionId,
-      commandId: message.commandId,
-      state: "stopped",
-    });
+    if (!ctx.isIdle()) ctx.abort();
   };
 
   const askThroughSlack = async (
