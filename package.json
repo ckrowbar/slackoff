@@ -14,7 +14,11 @@
     "./extension": "./dist/src/extension.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/bundle-extension.mjs",
+    "build:extension": "node scripts/bundle-extension.mjs",
+    "build:userscript": "node scripts/bundle-extension.mjs --userscript",
+    "watch:extension": "node scripts/bundle-extension.mjs --watch",
+    "typecheck:extension": "tsc -p extension/tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/**/*.test.ts"
   },
@@ -26,7 +30,9 @@
   },
   "devDependencies": {
     "@oh-my-pi/pi-coding-agent": "17.2.11",
+    "@types/chrome": "^0.0.287",
     "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
     "tsx": "4.23.11",
     "typescript": "7.0.2"
   }

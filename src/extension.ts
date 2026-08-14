@@ -6,7 +6,14 @@ import { z } from "zod";
 
 import { BridgeClient } from "./client.js";
 import { loadClientConfig } from "./config.js";
-import { PROTOCOL_VERSION, SlackBindingSchema, type ServerMessage, type SessionStatus } from "./protocol.js";
+import {
+  PROTOCOL_VERSION,
+  SlackBindingSchema,
+  type ModelDescriptor,
+  type ServerMessage,
+  type SessionModelState,
+  type SessionStatus,
+} from "./protocol.js";
 
 const STATE_TYPE = "io.github.ckrowbar.slackoff.state";
 const SessionStateSchema = z.object({
@@ -69,6 +76,8 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
   let registration: Promise<void> | undefined;
   const pendingAnswers = new Map<string, PendingSlackAnswer>();
   let replacedNativeAsk = false;
+  let lastModelStateSignature: string | undefined;
+  let lastSessionTitle: string | undefined;
 
   const reportError = (error: Error): void => {
     pi.logger.error("Slackoff extension error", {
@@ -89,9 +98,41 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
   const persistState = (): void => {
     pi.appendEntry(STATE_TYPE, currentState);
   };
+  const getSessionTitle = (sessionId: string): string => pi.getSessionName() ?? `OMP ${sessionId.slice(0, 8)}`;
+  const sendSessionTitle = (): void => {
+    if (!currentState.enabled || !registeredSessionId) return;
+    const title = getSessionTitle(registeredSessionId);
+    if (title === lastSessionTitle) return;
+    lastSessionTitle = title;
+    getClient().send({
+      type: "session_title",
+      sessionId: registeredSessionId,
+      title,
+    });
+  };
+  const sendModelState = (
+    ctx: ExtensionContext,
+    options: { commandId?: string; error?: string; force?: boolean } = {},
+  ): void => {
+    if (!currentState.enabled || !registeredSessionId) return;
+    const modelState = getSessionModelState(ctx);
+    const signature = JSON.stringify(modelState);
+    if (!options.force && signature === lastModelStateSignature) return;
+    lastModelStateSignature = signature;
+    getClient().send({
+      type: "model_state",
+      sessionId: registeredSessionId,
+      modelState,
+      ...(options.commandId ? { commandId: options.commandId } : {}),
+      ...(options.error ? { error: options.error } : {}),
+    });
+  };
+
 
   const sendStatus = (status: SessionStatus, activity?: string): void => {
     if (!currentState.enabled || !registeredSessionId) return;
+    sendSessionTitle();
+    if (currentContext) sendModelState(currentContext);
     const bridge = getClient();
     bridge.send({
       type: "status",
@@ -101,19 +142,21 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     });
   };
 
-  const resolveProjectName = async (ctx: ExtensionContext): Promise<string> => {
+  const resolveProjectIdentity = async (
+    ctx: ExtensionContext,
+  ): Promise<{ project: string; tmuxSessionName?: string }> => {
     const fallback = basename(ctx.cwd);
-    if (!process.env.TMUX) return fallback;
+    if (!process.env.TMUX) return { project: fallback };
     try {
       const result = await pi.exec("tmux", ["display-message", "-p", "#S"]);
       const sessionName = result.stdout.trim();
-      if (result.code === 0 && sessionName) return sessionName;
+      if (result.code === 0 && sessionName) return { project: sessionName, tmuxSessionName: sessionName };
     } catch (error) {
       pi.logger.warn("Could not resolve tmux session name for Slackoff project", {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    return fallback;
+    return { project: fallback };
   };
 
   const enableSlackAsk = async (): Promise<void> => {
@@ -147,20 +190,26 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       const bridge = getClient();
       await bridge.ensureConnected();
       const sessionId = ctx.sessionManager.getSessionId();
+      const modelState = getSessionModelState(ctx);
+      const title = getSessionTitle(sessionId);
+      const projectIdentity = await resolveProjectIdentity(ctx);
       const response = await bridge.request({
         type: "register",
         requestId: randomUUID(),
         protocolVersion: PROTOCOL_VERSION,
         session: {
           id: sessionId,
-          title: pi.getSessionName() ?? `OMP ${sessionId.slice(0, 8)}`,
-          project: await resolveProjectName(ctx),
+          title,
+          ...projectIdentity,
+          modelState,
         },
         ...(!resetBinding && currentState.binding ? { binding: currentState.binding } : {}),
       });
       if (!response.ok || !response.binding) throw new Error(response.error ?? "Slackoff registration failed");
 
       registeredSessionId = sessionId;
+      lastModelStateSignature = JSON.stringify(modelState);
+      lastSessionTitle = title;
       const bindingChanged = currentState.binding?.bindingId !== response.binding.bindingId;
       currentState = { version: 1, enabled: true, binding: response.binding };
       if (bindingChanged || resetBinding) persistState();
@@ -183,6 +232,8 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     }
     if (sessionId) rejectPendingAnswers(new Error(`Slackoff session ${reason}`), sessionId);
     registeredSessionId = undefined;
+    lastModelStateSignature = undefined;
+    lastSessionTitle = undefined;
   };
 
   const restoreState = (ctx: ExtensionContext): SessionState => {
@@ -227,11 +278,66 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       sendStatus("working", "Slack reply received");
       return;
     }
+    if (message.type === "set_model") {
+      void (async () => {
+        let error: string | undefined;
+        const model = ctx.models.resolve(message.selector);
+        if (!model) {
+          error = `Model is no longer available: ${message.selector}`;
+        } else if (!(await pi.setModel(model))) {
+          error = `No credentials are available for ${message.selector}`;
+        }
+        sendModelState(ctx, { commandId: message.commandId, ...(error ? { error } : {}), force: true });
+      })().catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        sendModelState(ctx, { commandId: message.commandId, error: detail, force: true });
+        reportError(error instanceof Error ? error : new Error(detail));
+      });
+      return;
+    }
+    if (message.type === "execute_slash_command") {
+      void (async () => {
+        const executeSlashCommand = (
+          pi as ExtensionAPI & { executeSlashCommand?: (command: string) => Promise<void> }
+        ).executeSlashCommand;
+        if (!executeSlashCommand) {
+          throw new Error("Installed OMP does not support extension slash-command execution");
+        }
+        await executeSlashCommand.call(pi, message.command);
+        getClient().send({
+          type: "command_ack",
+          sessionId: message.sessionId,
+          commandId: message.commandId,
+          state: "delivered",
+        });
+      })().catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        getClient().send({
+          type: "command_ack",
+          sessionId: message.sessionId,
+          commandId: message.commandId,
+          state: "failed",
+          detail,
+        });
+        reportError(error instanceof Error ? error : new Error(detail));
+      });
+      return;
+    }
+
+
 
     if (message.type === "instruction") {
       try {
+        const content: Array<
+          { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+        > = [];
+        const text = message.text.trim();
+        if (text) content.push({ type: "text", text });
+        for (const image of message.images) {
+          content.push({ type: "image", data: image.data, mimeType: image.mimeType });
+        }
         const wasIdle = ctx.isIdle();
-        pi.sendUserMessage(message.text, wasIdle ? undefined : { deliverAs: "followUp" });
+        pi.sendUserMessage(content, wasIdle ? undefined : { deliverAs: "followUp" });
         sendStatus("working", wasIdle ? "Starting turn" : "Instruction queued");
       } catch (error) {
         reportError(error instanceof Error ? error : new Error(String(error)));
@@ -378,6 +484,9 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     ctx.setInterval(() => {
       if (currentState.enabled && !client?.connected) {
         void activate(ctx).catch((error) => reportError(error instanceof Error ? error : new Error(String(error))));
+      } else if (currentState.enabled) {
+        sendSessionTitle();
+        sendModelState(ctx);
       }
     }, 5_000);
   });
@@ -434,6 +543,29 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     currentContext = undefined;
   });
 }
+function getSessionModelState(ctx: ExtensionContext): SessionModelState {
+  const currentModel = ctx.models.current();
+  const current = currentModel ? describeModel(currentModel) : undefined;
+  const availableBySelector = new Map<string, ModelDescriptor>();
+  for (const model of ctx.models.list()) {
+    const descriptor = describeModel(model);
+    availableBySelector.set(modelSelector(descriptor), descriptor);
+  }
+  if (current) availableBySelector.set(modelSelector(current), current);
+  return {
+    ...(current ? { current } : {}),
+    available: [...availableBySelector.values()],
+  };
+}
+
+function describeModel(model: { provider: string; id: string; name: string }): ModelDescriptor {
+  return { provider: model.provider, id: model.id, name: model.name || model.id };
+}
+
+function modelSelector(model: ModelDescriptor): string {
+  return `${model.provider}/${model.id}`;
+}
+
 
 function extractAssistantText(message: MessageEndEvent["message"]): string | undefined {
   if (!("role" in message) || message.role !== "assistant" || !("content" in message)) return undefined;

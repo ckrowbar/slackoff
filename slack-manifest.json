@@ -23,6 +23,7 @@
     "scopes": {
       "bot": [
         "chat:write",
+        "files:read",
         "im:history"
       ]
     }

@@ -62,6 +62,13 @@ export class SessionRegistry {
     return { record, replacedSocket };
   }
 
+  updateTitle(sessionId: string, socket: Socket, title: string): ActiveSession | undefined {
+    const record = this.#bySessionId.get(sessionId);
+    if (!record || record.socket !== socket || record.session.title === title) return undefined;
+    record.session.title = title;
+    return record;
+  }
+
   unregister(sessionId: string, socket: Socket, status: "offline" | "disabled"): ActiveSession | undefined {
     const record = this.#bySessionId.get(sessionId);
     if (!record || record.socket !== socket) return undefined;

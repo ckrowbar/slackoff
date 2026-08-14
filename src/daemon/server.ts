@@ -1,40 +1,26 @@
-import { chmodSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
-import { createServer, connect, type Server, type Socket } from "node:net";
-import { dirname } from "node:path";
+import type { Socket } from "node:net";
 
 import type { DaemonConfig } from "../config.js";
 import { ClientMessageSchema, encodeMessage, type ClientMessage, type ResponseMessage } from "../protocol.js";
 import { SessionRegistry } from "./registry.js";
 import { SlackController } from "./slack.js";
+import { OwnedUnixServer } from "./owned-unix-server.js";
 
 export class SlackoffDaemon {
   readonly #config: DaemonConfig;
   readonly #registry = new SessionRegistry();
   readonly #slack: SlackController;
-  #server: Server | undefined;
+  readonly #ipcServer: OwnedUnixServer;
   readonly #connections = new Set<Socket>();
 
   constructor(config: DaemonConfig) {
     this.#config = config;
     this.#slack = new SlackController(config, this.#registry);
+    this.#ipcServer = new OwnedUnixServer(config.socketPath);
   }
 
   async start(): Promise<void> {
-    mkdirSync(dirname(this.#config.socketPath), { recursive: true, mode: 0o700 });
-    if (existsSync(this.#config.socketPath)) {
-      if (await socketAcceptsConnections(this.#config.socketPath)) {
-        throw new Error(`Slackoff daemon is already running at ${this.#config.socketPath}`);
-      }
-      unlinkSync(this.#config.socketPath);
-    }
-
-    const server = createServer((socket) => this.#handleConnection(socket));
-    this.#server = server;
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    server.once("error", reject);
-    server.listen(this.#config.socketPath, () => resolve());
-    await promise;
-    chmodSync(this.#config.socketPath, 0o600);
+    await this.#ipcServer.listen((socket) => this.#handleConnection(socket));
 
     try {
       await this.#slack.start();
@@ -48,13 +34,7 @@ export class SlackoffDaemon {
     await this.#slack.stop().catch((error) => console.error("Slackoff Socket Mode shutdown failed", error));
     for (const socket of this.#connections) socket.destroy();
     this.#connections.clear();
-    if (this.#server) {
-      const { promise, resolve } = Promise.withResolvers<void>();
-      this.#server.close(() => resolve());
-      await promise;
-      this.#server = undefined;
-    }
-    if (existsSync(this.#config.socketPath)) unlinkSync(this.#config.socketPath);
+    await this.#ipcServer.close();
   }
 
   #handleConnection(socket: Socket): void {
@@ -74,8 +54,31 @@ export class SlackoffDaemon {
 
         processing = processing
           .then(async () => {
-            const parsed = ClientMessageSchema.safeParse(JSON.parse(line));
-            if (!parsed.success) throw new Error(`Invalid Slackoff client message: ${parsed.error.message}`);
+            const raw: unknown = JSON.parse(line);
+            const parsed = ClientMessageSchema.safeParse(raw);
+            if (!parsed.success) {
+              const requestId =
+                typeof raw === "object" &&
+                raw !== null &&
+                "requestId" in raw &&
+                typeof raw.requestId === "string"
+                  ? raw.requestId
+                  : undefined;
+              const protocolVersion =
+                typeof raw === "object" && raw !== null && "protocolVersion" in raw
+                  ? ` (received protocolVersion ${String(raw.protocolVersion)})`
+                  : "";
+              if (requestId) {
+                this.#respond(socket, {
+                  type: "response",
+                  requestId,
+                  ok: false,
+                  error: `Invalid Slackoff client message${protocolVersion}: ${parsed.error.message}`,
+                });
+                return;
+              }
+              throw new Error(`Invalid Slackoff client message: ${parsed.error.message}`);
+            }
             await this.#handleMessage(socket, parsed.data);
           })
           .catch((error) => {
@@ -102,8 +105,9 @@ export class SlackoffDaemon {
     switch (message.type) {
       case "register": {
         try {
-          const binding = await this.#slack.ensureBinding(message.session, message.binding);
-          const { record, replacedSocket } = this.#registry.register(message.session, binding, socket);
+          const session = this.#slack.claimTmuxAttachment(message.session);
+          const binding = await this.#slack.ensureBinding(session, message.binding);
+          const { record, replacedSocket } = this.#registry.register(session, binding, socket);
           if (replacedSocket) {
             replacedSocket.write(encodeMessage({ type: "replaced", sessionId: message.session.id, reason: "lease" }));
           }
@@ -131,6 +135,13 @@ export class SlackoffDaemon {
         if (record) this.#slack.scheduleHomeRefresh();
         return;
       }
+      case "session_title": {
+        const record = this.#registry.updateTitle(message.sessionId, socket, message.title);
+        if (!record) return;
+        this.#slack.scheduleRootRefresh(record);
+        this.#slack.scheduleHomeRefresh();
+        return;
+      }
       case "status": {
         const record = this.#registry.getBySessionId(message.sessionId);
         if (!record || record.socket !== socket) return;
@@ -140,14 +151,28 @@ export class SlackoffDaemon {
         this.#slack.scheduleHomeRefresh();
         return;
       }
+      case "model_state": {
+        const record = this.#registry.getBySessionId(message.sessionId);
+        if (!record || record.socket !== socket) return;
+        record.session.modelState = message.modelState;
+        this.#slack.scheduleRootRefresh(record);
+        if (message.error) await this.#slack.postModelError(record, message.error);
+        return;
+      }
       case "transcript": {
         const record = this.#registry.getBySessionId(message.sessionId);
         if (!record || record.socket !== socket) return;
         await this.#slack.postTranscript(record, message.role, message.text);
         return;
       }
-      case "command_ack":
+      case "command_ack": {
+        const record = this.#registry.getBySessionId(message.sessionId);
+        if (!record || record.socket !== socket) return;
+        if (message.state === "failed") {
+          await this.#slack.postCommandError(record, message.detail ?? "Unknown error");
+        }
         return;
+      }
       case "question": {
         const record = this.#registry.getBySessionId(message.sessionId);
         if (!record || record.socket !== socket) {
@@ -187,15 +212,4 @@ export class SlackoffDaemon {
   #respond(socket: Socket, response: ResponseMessage): void {
     socket.write(encodeMessage(response));
   }
-}
-
-async function socketAcceptsConnections(socketPath: string): Promise<boolean> {
-  const { promise, resolve } = Promise.withResolvers<boolean>();
-  const socket = connect(socketPath);
-  socket.once("connect", () => {
-    socket.destroy();
-    resolve(true);
-  });
-  socket.once("error", () => resolve(false));
-  return promise;
 }

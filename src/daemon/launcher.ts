@@ -14,11 +14,26 @@ export interface SessionLaunchResult {
   cwd: string;
 }
 
+export interface OmpTmuxSession {
+  name: string;
+  paneId: string;
+}
+
+export interface CommandResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export type CommandRunner = (program: string, args: string[]) => Promise<CommandResult>;
+
 export class TmuxLauncher {
   readonly #ompPath: string;
+  readonly #run: CommandRunner;
 
-  constructor(ompPath: string) {
+  constructor(ompPath: string, run: CommandRunner = runCommand) {
     this.#ompPath = ompPath;
+    this.#run = run;
   }
 
   async launch(request: SessionLaunchRequest): Promise<SessionLaunchResult> {
@@ -29,13 +44,56 @@ export class TmuxLauncher {
       throw new Error(`OMP executable is not available: ${this.#ompPath}`);
     }
 
-    const result = await runCommand("tmux", buildTmuxArguments(normalized, this.#ompPath));
+    const result = await this.#run("tmux", buildTmuxArguments(normalized, this.#ompPath));
     if (result.code !== 0) {
       const detail = result.stderr.trim() || `tmux exited with code ${result.code}`;
       throw new Error(detail);
     }
     return { name: normalized.name, cwd: normalized.cwd };
   }
+
+  async listOmpSessions(): Promise<OmpTmuxSession[]> {
+    const result = await this.#run("tmux", [
+      "list-panes",
+      "-a",
+      "-F",
+      "#{pane_id}\t#{session_name}\t#{pane_current_command}",
+    ]);
+    if (result.code !== 0) {
+      const detail = result.stderr.trim() || `tmux exited with code ${result.code}`;
+      throw new Error(detail);
+    }
+    return parseOmpTmuxSessions(result.stdout);
+  }
+
+  async enableSlackoff(paneId: string): Promise<OmpTmuxSession> {
+    const session = (await this.listOmpSessions()).find((candidate) => candidate.paneId === paneId);
+    if (!session) throw new Error("The selected OMP tmux pane is no longer available");
+
+    const input = await this.#run("tmux", ["send-keys", "-t", paneId, "-l", "/slackoff on"]);
+    if (input.code !== 0) throw new Error(input.stderr.trim() || `tmux exited with code ${input.code}`);
+    const enter = await this.#run("tmux", ["send-keys", "-t", paneId, "Enter"]);
+    if (enter.code !== 0) throw new Error(enter.stderr.trim() || `tmux exited with code ${enter.code}`);
+    return session;
+  }
+
+  async killOmpSession(name: string): Promise<void> {
+    const session = (await this.listOmpSessions()).find((candidate) => candidate.name === name);
+    if (!session) throw new Error(`OMP tmux session is no longer available: ${name}`);
+    const result = await this.#run("tmux", ["kill-session", "-t", `=${session.name}`]);
+    if (result.code !== 0) throw new Error(result.stderr.trim() || `tmux exited with code ${result.code}`);
+  }
+}
+
+export function parseOmpTmuxSessions(output: string): OmpTmuxSession[] {
+  const sessions = new Map<string, OmpTmuxSession>();
+  for (const line of output.split("\n")) {
+    if (!line) continue;
+    const [paneId, name, command] = line.split("\t");
+    if (!paneId || !name || command !== "omp" || !/^%\d+$/.test(paneId) || sessions.has(name)) continue;
+    sessions.set(name, { name, paneId });
+  }
+  return [...sessions.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export function normalizeLaunchRequest(request: SessionLaunchRequest, home = homedir()): SessionLaunchRequest {
@@ -76,15 +134,20 @@ export function buildTmuxArguments(request: SessionLaunchRequest, ompPath: strin
   return ["new-session", "-d", "-s", request.name, "-c", request.cwd, ...environment, command];
 }
 
-function runCommand(program: string, args: string[]): Promise<{ code: number; stderr: string }> {
-  return new Promise((resolveResult, reject) => {
-    const child = spawn(program, args, { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      if (stderr.length < 8_000) stderr += chunk;
-    });
-    child.once("error", reject);
-    child.once("close", (code) => resolveResult({ code: code ?? 1, stderr }));
+function runCommand(program: string, args: string[]): Promise<CommandResult> {
+  const { promise, resolve, reject } = Promise.withResolvers<CommandResult>();
+  const child = spawn(program, args, { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    if (stdout.length < 64_000) stdout += chunk;
   });
+  child.stderr.on("data", (chunk: string) => {
+    if (stderr.length < 8_000) stderr += chunk;
+  });
+  child.once("error", reject);
+  child.once("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  return promise;
 }

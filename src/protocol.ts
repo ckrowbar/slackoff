@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 5 as const;
 
 export const SessionStatusSchema = z.enum([
   "idle",
@@ -20,18 +20,39 @@ export const SlackBindingSchema = z.object({
   threadTs: z.string().min(1),
 });
 export type SlackBinding = z.infer<typeof SlackBindingSchema>;
+export const ModelDescriptorSchema = z.object({
+  provider: z.string().min(1),
+  id: z.string().min(1),
+  name: z.string().min(1),
+});
+export type ModelDescriptor = z.infer<typeof ModelDescriptorSchema>;
+
+export const SessionModelStateSchema = z.object({
+  current: ModelDescriptorSchema.optional(),
+  available: z.array(ModelDescriptorSchema),
+});
+export type SessionModelState = z.infer<typeof SessionModelStateSchema>;
+export const ImageInputSchema = z.object({
+  data: z.string().min(1),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]),
+});
+export type ImageInput = z.infer<typeof ImageInputSchema>;
+
+
 
 export const SessionDescriptorSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   project: z.string(),
+  tmuxSessionName: z.string().min(1).optional(),
+  modelState: SessionModelStateSchema.default({ available: [] }),
 });
 export type SessionDescriptor = z.infer<typeof SessionDescriptorSchema>;
 
 const RegisterRequestSchema = z.object({
   type: z.literal("register"),
   requestId: z.string().min(1),
-  protocolVersion: z.literal(PROTOCOL_VERSION),
+  protocolVersion: z.number().int().min(1).max(PROTOCOL_VERSION),
   session: SessionDescriptorSchema,
   binding: SlackBindingSchema.optional(),
 });
@@ -48,6 +69,19 @@ const StatusMessageSchema = z.object({
   status: SessionStatusSchema,
   activity: z.string().optional(),
 });
+const SessionTitleMessageSchema = z.object({
+  type: z.literal("session_title"),
+  sessionId: z.string().min(1),
+  title: z.string().min(1),
+});
+const ModelStateMessageSchema = z.object({
+  type: z.literal("model_state"),
+  sessionId: z.string().min(1),
+  modelState: SessionModelStateSchema,
+  commandId: z.string().min(1).optional(),
+  error: z.string().min(1).optional(),
+});
+
 
 const TranscriptMessageSchema = z.object({
   type: z.literal("transcript"),
@@ -95,6 +129,8 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   RegisterRequestSchema,
   UnregisterMessageSchema,
   StatusMessageSchema,
+  SessionTitleMessageSchema,
+  ModelStateMessageSchema,
   TranscriptMessageSchema,
   CommandAcknowledgementSchema,
   QuestionRequestSchema,
@@ -105,6 +141,8 @@ export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type UnregisterMessage = z.infer<typeof UnregisterMessageSchema>;
 export type StatusMessage = z.infer<typeof StatusMessageSchema>;
+export type SessionTitleMessage = z.infer<typeof SessionTitleMessageSchema>;
+export type ModelStateMessage = z.infer<typeof ModelStateMessageSchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
 export type CommandAcknowledgement = z.infer<typeof CommandAcknowledgementSchema>;
 export type QuestionRequest = z.infer<typeof QuestionRequestSchema>;
@@ -118,18 +156,36 @@ const ResponseMessageSchema = z.object({
   error: z.string().optional(),
 });
 
-const InstructionMessageSchema = z.object({
-  type: z.literal("instruction"),
-  sessionId: z.string().min(1),
-  commandId: z.string().min(1),
-  text: z.string().min(1),
-});
+const InstructionMessageSchema = z
+  .object({
+    type: z.literal("instruction"),
+    sessionId: z.string().min(1),
+    commandId: z.string().min(1),
+    text: z.string().default(""),
+    images: z.array(ImageInputSchema).max(10).default([]),
+  })
+  .refine((message) => message.text.trim().length > 0 || message.images.length > 0, {
+    message: "Instruction must include text or at least one image",
+  });
 
 const StopMessageSchema = z.object({
   type: z.literal("stop"),
   sessionId: z.string().min(1),
   commandId: z.string().min(1),
 });
+const SetModelMessageSchema = z.object({
+  type: z.literal("set_model"),
+  sessionId: z.string().min(1),
+  commandId: z.string().min(1),
+  selector: z.string().min(1),
+});
+const ExecuteSlashCommandMessageSchema = z.object({
+  type: z.literal("execute_slash_command"),
+  sessionId: z.string().min(1),
+  commandId: z.string().min(1),
+  command: z.string().regex(/^\/\S+(?:[ \t]+.*)?$/),
+});
+
 
 const ReplacedMessageSchema = z.object({
   type: z.literal("replaced"),
@@ -148,6 +204,8 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   ResponseMessageSchema,
   InstructionMessageSchema,
   StopMessageSchema,
+  SetModelMessageSchema,
+  ExecuteSlashCommandMessageSchema,
   ReplacedMessageSchema,
   QuestionAnswerMessageSchema,
 ]);
@@ -155,6 +213,8 @@ export type ServerMessage = z.infer<typeof ServerMessageSchema>;
 export type ResponseMessage = z.infer<typeof ResponseMessageSchema>;
 export type InstructionMessage = z.infer<typeof InstructionMessageSchema>;
 export type StopMessage = z.infer<typeof StopMessageSchema>;
+export type SetModelMessage = z.infer<typeof SetModelMessageSchema>;
+export type ExecuteSlashCommandMessage = z.infer<typeof ExecuteSlashCommandMessageSchema>;
 export type QuestionAnswerMessage = z.infer<typeof QuestionAnswerMessageSchema>;
 
 export function encodeMessage(message: ClientMessage | ServerMessage): string {

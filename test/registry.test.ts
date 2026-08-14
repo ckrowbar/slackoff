@@ -4,7 +4,15 @@ import test from "node:test";
 
 import { SessionRegistry } from "../src/daemon/registry.js";
 
-const session = { id: "session-1", title: "Fix parser", project: "project" };
+const session = {
+  id: "session-1",
+  title: "Fix parser",
+  project: "project",
+  modelState: {
+    current: { provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+    available: [{ provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+  },
+};
 const binding = { bindingId: "binding-1", channelId: "D123", threadTs: "100.200" };
 
 test("routes a Slack thread to its active OMP session", () => {
@@ -30,6 +38,20 @@ test("new registration takes the lease and stale disconnect cannot evict it", ()
   assert.equal(registry.getBySessionId(session.id)?.socket, secondSocket);
 });
 
+test("updates titles only from the session's active connection", () => {
+  const registry = new SessionRegistry();
+  const activeSocket = new Socket();
+  const staleSocket = new Socket();
+  registry.register({ ...session }, binding, activeSocket);
+
+  assert.equal(registry.updateTitle(session.id, staleSocket, "Stale title"), undefined);
+  const updated = registry.updateTitle(session.id, activeSocket, "Investigate parser regression");
+
+  assert.equal(updated?.session.title, "Investigate parser regression");
+  assert.equal(registry.getBySessionId(session.id)?.session.title, "Investigate parser regression");
+  assert.equal(registry.updateTitle(session.id, activeSocket, "Investigate parser regression"), undefined);
+});
+
 test("disabled registration remains addressable but cannot receive commands", () => {
   const registry = new SessionRegistry();
   const socket = new Socket();
@@ -49,7 +71,7 @@ test("disconnecting one session does not affect another session", () => {
   const secondSocket = new Socket();
   registry.register(session, binding, firstSocket);
   registry.register(
-    { id: "session-2", title: "Review API", project: "other-project" },
+    { ...session, id: "session-2", title: "Review API", project: "other-project" },
     { bindingId: "binding-2", channelId: "D123", threadTs: "300.400" },
     secondSocket,
   );

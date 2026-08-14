@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Slackoff Console",
+  "version": "0.1.0",
+  "description": "Renders an OMP coding-agent console over your Slackoff DM inside Slack.",
+  "minimum_chrome_version": "120",
+  "host_permissions": ["https://app.slack.com/*", "https://*.slack.com/*"],
+  "permissions": ["storage", "notifications"],
+  "background": {
+    "service_worker": "dist/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.slack.com/client/*", "https://*.slack.com/client/*"],
+      "js": ["dist/content.js"],
+      "css": ["dist/styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Toggle Slackoff Console takeover"
+  },
+  "options_page": "options.html",
+  "commands": {
+    "toggle-takeover": {
+      "suggested_key": {
+        "default": "Alt+Shift+O",
+        "mac": "Command+Shift+O"
+      },
+      "description": "Toggle the Slackoff Console takeover"
+    }
+  }
+}

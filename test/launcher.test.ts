@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { buildTmuxArguments, normalizeLaunchRequest } from "../src/daemon/launcher.js";
+import {
+  buildTmuxArguments,
+  normalizeLaunchRequest,
+  parseOmpTmuxSessions,
+  TmuxLauncher,
+  type CommandRunner,
+} from "../src/daemon/launcher.js";
 
 test("normalizes a safe Home session launch", () => {
   const home = mkdtempSync(join(tmpdir(), "slackoff-launch-"));
@@ -40,4 +46,33 @@ test("passes launch values through tmux environment instead of the shell command
     args.at(-1),
     'exec "$SLACKOFF_OMP_PATH" --allow-home --cwd "$SLACKOFF_CWD" "$SLACKOFF_INITIAL_PROMPT"',
   );
+});
+
+test("discovers OMP panes and ignores other tmux commands", () => {
+  assert.deepEqual(
+    parseOmpTmuxSessions("%2\tzeta\tomp\n%1\talpha\tomp\n%3\tshell\tzsh\n%4\talpha\tomp\n"),
+    [
+      { name: "alpha", paneId: "%1" },
+      { name: "zeta", paneId: "%2" },
+    ],
+  );
+});
+
+test("attaches and deletes only revalidated OMP tmux targets", async () => {
+  const calls: string[][] = [];
+  const run: CommandRunner = async (_program, args) => {
+    calls.push(args);
+    if (args[0] === "list-panes") {
+      return { code: 0, stdout: "%1\talpha\tomp\n%2\tzeta\tomp\n", stderr: "" };
+    }
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  const launcher = new TmuxLauncher("/opt/omp/bin/omp", run);
+
+  assert.deepEqual(await launcher.enableSlackoff("%2"), { name: "zeta", paneId: "%2" });
+  await launcher.killOmpSession("alpha");
+
+  assert.deepEqual(calls[1], ["send-keys", "-t", "%2", "-l", "/slackoff on"]);
+  assert.deepEqual(calls[2], ["send-keys", "-t", "%2", "Enter"]);
+  assert.deepEqual(calls[4], ["kill-session", "-t", "=alpha"]);
 });

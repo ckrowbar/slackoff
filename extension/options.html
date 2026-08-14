@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Slackoff Console options</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #16181d;
+        --panel: #1d2027;
+        --line: #2c313b;
+        --text: #e7e9ee;
+        --muted: #9aa1ad;
+        --accent: #d95f2b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 32px 24px 48px;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+      }
+
+      h2 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      section {
+        padding: 16px 18px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+
+      p {
+        margin: 0 0 8px;
+        color: var(--muted);
+      }
+
+      ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      li {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 10px;
+        background: #22262e;
+        border-radius: 6px;
+      }
+
+      code,
+      .mono {
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        justify-content: space-between;
+      }
+
+      .row + .row {
+        margin-top: 12px;
+      }
+
+      label.toggle {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      button {
+        padding: 7px 13px;
+        color: var(--text);
+        background: #2a2f38;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button:hover {
+        border-color: var(--accent);
+      }
+
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #16181d;
+        font-weight: 600;
+      }
+
+      select {
+        padding: 6px 9px;
+        color: var(--text);
+        background: #2a2f38;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font: inherit;
+      }
+
+      #status {
+        min-height: 18px;
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Slackoff Console</h1>
+
+      <section>
+        <h2>Workspaces</h2>
+        <p>Read from the Slack tab itself. Session tokens stay in that tab and are never stored.</p>
+        <ul id="workspaces"></ul>
+      </section>
+
+      <section>
+        <h2>Slackoff DM</h2>
+        <div class="row">
+          <span id="channel" class="mono">Not detected yet</span>
+          <button id="detect" type="button">Detect again</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Preferences</h2>
+        <div class="row">
+          <label class="toggle" for="notifications">
+            <input id="notifications" type="checkbox" />
+            Desktop notification when a session needs you
+          </label>
+        </div>
+        <div class="row">
+          <label class="toggle" for="takeover">
+            <input id="takeover" type="checkbox" />
+            Take over the Slack message pane by default
+          </label>
+        </div>
+        <div class="row">
+          <label class="toggle" for="theme">Theme</label>
+          <select id="theme">
+            <option value="codex">Codex</option>
+            <option value="slack">Slack</option>
+          </select>
+        </div>
+      </section>
+
+      <section>
+        <h2>Standalone</h2>
+        <div class="row">
+          <span>Run the console in its own tab instead of over Slack.</span>
+          <button id="open-tab" type="button" class="primary">Open console in a tab</button>
+        </div>
+      </section>
+
+      <div id="status" role="status"></div>
+    </main>
+    <script src="dist/options.js"></script>
+  </body>
+</html>

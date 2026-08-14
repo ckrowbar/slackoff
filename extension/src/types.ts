@@ -1,0 +1,191 @@
+import type { SessionStatus } from "../../src/protocol.js";
+
+/**
+ * Contract between the three extension layers.
+ *
+ *   slack/*   talks to Slack and produces SessionView + ThreadEvent
+ *   app/*     implements Controller over that data
+ *   ui/*      renders AppState and calls Controller, and knows nothing about Slack
+ *
+ * The UI depends only on Controller and AppState, so it can be driven from fixtures.
+ */
+
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface PendingQuestion {
+  questionId: string;
+  /** Slack ts of the question message, used to reply in place. */
+  ts: string;
+  prompt: string;
+  options: QuestionOption[];
+  multi: boolean;
+  askedAt: number;
+}
+
+export interface ModelOption {
+  provider: string;
+  id: string;
+  name: string;
+  /** "provider/id", the selector the daemon expects. */
+  selector: string;
+}
+
+export interface SessionView {
+  /** OMP session id. Stable across reconnects. */
+  sessionId: string;
+  /** Slack binding id; also the actions block_id on the root card. */
+  bindingId: string;
+  channelId: string;
+  /** Slack ts of the root card, which is the thread parent. */
+  threadTs: string;
+  title: string;
+  project: string;
+  status: SessionStatus;
+  /** Short phrase for current work, empty when unknown. */
+  activity: string;
+  model?: ModelOption;
+  models: ModelOption[];
+  /** Closed threads render as a single collapsed row and accept no input. */
+  collapsed: boolean;
+  /** Epoch ms of the root card, i.e. when the session bound to Slack. */
+  startedAt: number;
+  /** Epoch ms of the newest thread activity we have seen. */
+  updatedAt: number;
+  /** Unread thread messages since the user last focused this session. */
+  unread: number;
+  pendingQuestion?: PendingQuestion;
+  /** True when the session can accept input: bound, not collapsed, not offline. */
+  controllable: boolean;
+}
+
+export type ThreadEventKind =
+  | "user"
+  | "assistant"
+  | "question"
+  | "answered"
+  | "cancelled"
+  | "notice"
+  | "unknown";
+
+export interface ThreadEvent {
+  /** Slack message ts, unique within the thread and monotonic. */
+  ts: string;
+  at: number;
+  kind: ThreadEventKind;
+  text: string;
+  /** Populated for question events. */
+  question?: PendingQuestion;
+  /** Set when this event is a local optimistic echo not yet confirmed by Slack. */
+  pending?: boolean;
+  /** Set when a local send failed, so the UI can offer a retry. */
+  failed?: string;
+}
+
+export interface ThreadState {
+  sessionId: string;
+  events: ThreadEvent[];
+  loading: boolean;
+  /** Oldest ts fetched, for paging further back. */
+  oldestTs?: string;
+  hasMore: boolean;
+}
+
+export type ConnectionState =
+  | { phase: "connecting" }
+  | { phase: "ready"; team: string; lastSyncAt: number }
+  | { phase: "error"; message: string; recoverable: boolean };
+
+export type StatusFilter = "all" | "attention" | "active";
+
+export interface AppState {
+  connection: ConnectionState;
+  sessions: SessionView[];
+  selectedSessionId?: string;
+  thread?: ThreadState;
+  filter: StatusFilter;
+  query: string;
+  /** Sessions waiting on the user, newest first. Drives the inbox and the badge. */
+  attention: SessionView[];
+  /** Transient banner, e.g. a rate-limit notice. */
+  notice?: string;
+  busy: boolean;
+}
+
+export interface Controller {
+  getState(): AppState;
+  subscribe(listener: (state: AppState) => void): () => void;
+  /** Start polling. Returns a teardown that stops all timers and aborts in-flight calls. */
+  start(): void;
+  stop(): void;
+  select(sessionId: string | undefined): void;
+  setFilter(filter: StatusFilter): void;
+  setQuery(query: string): void;
+  refresh(): Promise<void>;
+  loadMore(): Promise<void>;
+  sendInstruction(sessionId: string, text: string): Promise<void>;
+  /** `answers` are option labels for a choice question, or one free-text string. */
+  answerQuestion(sessionId: string, answers: readonly string[]): Promise<void>;
+  stopTurn(sessionId: string): Promise<void>;
+  setModel(sessionId: string, selector: string): Promise<void>;
+  closeThread(sessionId: string): Promise<void>;
+}
+
+/** Mounts the UI. Returns a teardown that removes every node and listener it added. */
+export type MountApp = (root: HTMLElement, controller: Controller) => () => void;
+
+/* ---------- content script <-> background service worker ---------- */
+
+export interface SlackCallRequest {
+  type: "slack.call";
+  /** Full API origin, e.g. "https://dd.enterprise.slack.com". */
+  origin: string;
+  method: string;
+  token: string;
+  params: Record<string, string | number | boolean>;
+}
+
+export interface NotifyRequest {
+  type: "notify";
+  sessionId: string;
+  title: string;
+  body: string;
+}
+
+export interface BadgeRequest {
+  type: "badge";
+  count: number;
+}
+
+export interface FocusRequest {
+  type: "focus";
+  sessionId: string;
+}
+
+export type BackgroundRequest = SlackCallRequest | NotifyRequest | BadgeRequest | FocusRequest;
+
+export type BackgroundResponse<T = unknown> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; status?: number; retryAfterMs?: number };
+
+/** Persisted in chrome.storage.local. */
+export interface StoredSettings {
+  /** Slack API origin the DM lives on. */
+  origin?: string;
+  /** Cached Slackoff DM channel id, so discovery runs once. */
+  channelId?: string;
+  /** Slack user id the DM belongs to. */
+  userId?: string;
+  notifications: boolean;
+  /** Takeover on by default; toggled with the hotkey. */
+  takeover: boolean;
+  theme: "codex" | "slack";
+}
+
+export const DEFAULT_SETTINGS: StoredSettings = {
+  notifications: true,
+  takeover: true,
+  theme: "codex",
+};

@@ -8,19 +8,38 @@ import { z } from "zod";
 
 import type { DaemonConfig } from "../config.js";
 import {
+  buildQuestionMetadata,
+  buildSessionMetadata,
+  buildTranscriptMetadata,
+  type MessageMetadata,
+} from "../metadata.js";
+import {
   encodeMessage,
+  type ImageInput,
   type QuestionRequest,
   type SessionDescriptor,
   type SessionStatus,
   type SlackBinding,
 } from "../protocol.js";
 import {
+  buildAttachSessionModal,
+  buildCloseSessionModal,
   buildCollapsedSessionBlocks,
+  buildThreadReplyPermalink,
   buildHomeView,
   buildLaunchModal,
   buildSessionBlocks,
+  CLOSE_AND_DELETE_TMUX,
+  CLOSE_SESSION_BLOCK,
+  CLOSE_SESSION_INPUT,
+  CLOSE_SESSION_VIEW,
   CLOSE_THREAD_ACTION,
+  CLOSE_THREAD_ONLY,
   escapeMrkdwn,
+  HOME_ATTACH_ACTION,
+  HOME_ATTACH_BLOCK,
+  HOME_ATTACH_INPUT,
+  HOME_ATTACH_VIEW,
   HOME_CWD_BLOCK,
   HOME_CWD_INPUT,
   HOME_LAUNCH_VIEW,
@@ -29,8 +48,11 @@ import {
   HOME_NEW_SESSION_ACTION,
   HOME_PROMPT_BLOCK,
   HOME_PROMPT_INPUT,
+  MODEL_ACTION,
   STOP_ACTION,
 } from "./blocks.js";
+import { parseThreadCommand } from "./commands.js";
+import { downloadSlackImages } from "./images.js";
 import { TmuxLauncher } from "./launcher.js";
 import type { ActiveSession } from "./registry.js";
 import { SessionRegistry } from "./registry.js";
@@ -42,11 +64,28 @@ const DmMessageSchema = z.object({
   text: z.string().default(""),
   ts: z.string().min(1),
   thread_ts: z.string().optional(),
+  files: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().nullable().optional(),
+        title: z.string().nullable().optional(),
+        mimetype: z.string(),
+        size: z.number().int().nonnegative(),
+        url_private: z.string().url().optional(),
+        url_private_download: z.string().url().optional(),
+      }),
+    )
+    .default([]),
   subtype: z.string().optional(),
   bot_id: z.string().optional(),
 });
 
 const ActionValueSchema = z.object({ value: z.string().min(1) });
+const ModelActionSchema = z.object({
+  block_id: z.string().min(1),
+  selected_option: z.object({ value: z.string().min(1) }),
+});
 const ActionBodySchema = z.object({
   user: z.object({ id: z.string().min(1) }),
 });
@@ -68,6 +107,22 @@ const HomeLaunchStateSchema = z.object({
     [HOME_PROMPT_INPUT]: z.object({ value: z.string().nullish() }),
   }),
 });
+const HomeAttachStateSchema = z.object({
+  [HOME_ATTACH_BLOCK]: z.object({
+    [HOME_ATTACH_INPUT]: z.object({
+      selected_option: z.object({ value: z.string().min(1) }),
+    }),
+  }),
+});
+const CloseSessionStateSchema = z.object({
+  [CLOSE_SESSION_BLOCK]: z.object({
+    [CLOSE_SESSION_INPUT]: z.object({
+      selected_option: z.object({
+        value: z.enum([CLOSE_THREAD_ONLY, CLOSE_AND_DELETE_TMUX]),
+      }),
+    }),
+  }),
+});
 const SlackErrorSchema = z.object({ data: z.object({ error: z.string() }) });
 
 export class SlackController {
@@ -78,6 +133,8 @@ export class SlackController {
   readonly #seenEvents = new Map<string, number>();
   readonly #rootRefreshTimers = new Map<string, NodeJS.Timeout>();
   readonly #closedBindings = new Set<string>();
+  readonly #threadPermalinks = new Map<string, string>();
+  readonly #pendingTmuxAttachments: Array<{ name: string; expiresAt: number }> = [];
   #homeRefreshTimer: NodeJS.Timeout | undefined;
   #homeNotice: string | undefined;
 
@@ -96,6 +153,17 @@ export class SlackController {
 
   get client(): WebClient {
     return this.#app.client;
+  }
+
+  claimTmuxAttachment(session: SessionDescriptor): SessionDescriptor {
+    const now = Date.now();
+    while (this.#pendingTmuxAttachments[0]?.expiresAt && this.#pendingTmuxAttachments[0].expiresAt <= now) {
+      this.#pendingTmuxAttachments.shift();
+    }
+    const pending = this.#pendingTmuxAttachments.shift();
+    return pending
+      ? { ...session, project: pending.name, tmuxSessionName: pending.name }
+      : session;
   }
 
   async start(): Promise<void> {
@@ -118,7 +186,19 @@ export class SlackController {
           ts: binding.threadTs,
           text: `OMP session: ${session.title}`,
           blocks: buildSessionBlocks(session, binding.bindingId, "idle", undefined),
+          metadata: buildSessionMetadata({
+            sessionId: session.id,
+            bindingId: binding.bindingId,
+            title: session.title,
+            project: session.project,
+            status: "idle",
+            activity: undefined,
+            collapsed: false,
+            model: session.modelState.current,
+            models: session.modelState.available,
+          }),
         });
+        await this.#getThreadPermalink(binding);
         return binding;
       } catch (error) {
         const parsed = SlackErrorSchema.safeParse(error);
@@ -132,9 +212,36 @@ export class SlackController {
       channel: this.#config.userId,
       text: `OMP session: ${session.title}`,
       blocks: buildSessionBlocks(session, bindingId, "idle", undefined),
+      metadata: buildSessionMetadata({
+        sessionId: session.id,
+        bindingId,
+        title: session.title,
+        project: session.project,
+        status: "idle",
+        activity: undefined,
+        collapsed: false,
+        model: session.modelState.current,
+        models: session.modelState.available,
+      }),
     });
     if (!result.channel || !result.ts) throw new Error("Slack did not return a DM channel and message timestamp");
-    return { bindingId, channelId: result.channel, threadTs: result.ts };
+    const createdBinding = { bindingId, channelId: result.channel, threadTs: result.ts };
+    await this.#getThreadPermalink(createdBinding);
+    return createdBinding;
+  }
+
+  #sessionMetadata(record: ActiveSession): MessageMetadata {
+    return buildSessionMetadata({
+      sessionId: record.session.id,
+      bindingId: record.binding.bindingId,
+      title: record.session.title,
+      project: record.session.project,
+      status: record.status,
+      activity: record.activity,
+      collapsed: record.collapsed,
+      model: record.session.modelState.current,
+      models: record.session.modelState.available,
+    });
   }
 
   async refreshRoot(record: ActiveSession): Promise<void> {
@@ -149,6 +256,7 @@ export class SlackController {
       blocks: record.collapsed
         ? buildCollapsedSessionBlocks(record.session)
         : buildSessionBlocks(record.session, record.binding.bindingId, record.status, record.activity),
+      metadata: this.#sessionMetadata(record),
     });
 
   }
@@ -164,18 +272,34 @@ export class SlackController {
   }
 
   async publishHome(): Promise<void> {
-    const sessions = [...this.#registry.values()]
-      .filter((record) => record.socket && !record.collapsed)
-      .map((record) => ({
+    const records = [...this.#registry.values()].filter((record) => record.socket && !record.collapsed);
+    const sessions = await Promise.all(
+      records.map(async (record) => ({
         title: record.session.title,
         project: record.session.project,
         status: record.status,
         ...(record.activity ? { activity: record.activity } : {}),
-      }));
+        permalink: await this.#getThreadPermalink(record.binding),
+      })),
+    );
     await this.#app.client.views.publish({
       user_id: this.#config.userId,
       view: buildHomeView(sessions, this.#homeNotice),
     });
+  }
+
+  async #getThreadPermalink(binding: SlackBinding): Promise<string> {
+    const key = `${binding.channelId}:${binding.threadTs}`;
+    const cached = this.#threadPermalinks.get(key);
+    if (cached) return cached;
+
+    const result = await this.#app.client.chat.getPermalink({
+      channel: binding.channelId,
+      message_ts: binding.threadTs,
+    });
+    if (!result.permalink) throw new Error("Slack did not return a session thread permalink");
+    this.#threadPermalinks.set(key, result.permalink);
+    return result.permalink;
   }
 
   scheduleHomeRefresh(): void {
@@ -188,8 +312,9 @@ export class SlackController {
   }
 
   async postTranscript(record: ActiveSession, role: "user" | "assistant", text: string): Promise<void> {
-    for (const chunk of splitText(text, 2_800)) {
-      await this.#app.client.chat.postMessage({
+    const chunks = splitText(text, 2_800);
+    for (const [index, chunk] of chunks.entries()) {
+      const result = await this.#app.client.chat.postMessage({
         channel: record.binding.channelId,
         thread_ts: record.binding.threadTs,
         text: role === "user" ? `Local instruction: ${chunk}` : chunk,
@@ -202,7 +327,28 @@ export class SlackController {
             },
           },
         ],
+        metadata: buildTranscriptMetadata({
+          sessionId: record.session.id,
+          bindingId: record.binding.bindingId,
+          role,
+          chunk: index,
+          chunks: chunks.length,
+        }),
       });
+      if (result.ts) {
+        const permalink = await this.#getThreadPermalink(record.binding);
+        const key = `${record.binding.channelId}:${record.binding.threadTs}`;
+        this.#threadPermalinks.set(
+          key,
+          buildThreadReplyPermalink(
+            permalink,
+            record.binding.channelId,
+            record.binding.threadTs,
+            result.ts,
+          ),
+        );
+        this.scheduleHomeRefresh();
+      }
     }
   }
 
@@ -216,6 +362,14 @@ export class SlackController {
       thread_ts: record.binding.threadTs,
       text: `Question: ${question.prompt}`,
       blocks: buildQuestionBlocks(question.prompt, question.options, question.multi, "waiting"),
+      metadata: buildQuestionMetadata({
+        sessionId: record.session.id,
+        bindingId: record.binding.bindingId,
+        questionId: question.questionId,
+        multi: question.multi,
+        state: "waiting",
+        options: question.options,
+      }),
     });
     if (!result.ts) throw new Error("Slack did not return a question message timestamp");
 
@@ -249,6 +403,14 @@ export class SlackController {
         pending.multi,
         "cancelled",
       ),
+      metadata: buildQuestionMetadata({
+        sessionId: record.session.id,
+        bindingId: record.binding.bindingId,
+        questionId: pending.questionId,
+        multi: pending.multi,
+        state: nextStatus === "offline" || nextStatus === "disabled" ? "offline" : "cancelled",
+        options: pending.options.map((label) => ({ label })),
+      }),
     });
     record.status = nextStatus;
     record.activity = nextStatus === "working" ? "Question cancelled" : undefined;
@@ -269,6 +431,57 @@ export class SlackController {
         trigger_id: parsed.data.trigger_id,
         view: buildLaunchModal(homedir()),
       });
+    });
+
+    this.#app.action(HOME_ATTACH_ACTION, async ({ ack, body }) => {
+      await ack();
+      const parsed = HomeActionBodySchema.safeParse(body);
+      if (!parsed.success || parsed.data.user.id !== this.#config.userId) return;
+      const sessions = await this.#availableOmpTmuxSessions();
+      await this.#app.client.views.open({
+        trigger_id: parsed.data.trigger_id,
+        view: buildAttachSessionModal(sessions),
+      });
+    });
+
+    this.#app.view(HOME_ATTACH_VIEW, async ({ ack, body, view }) => {
+      const parsedBody = HomeLaunchBodySchema.safeParse(body);
+      if (!parsedBody.success || parsedBody.data.user.id !== this.#config.userId) {
+        await ack();
+        return;
+      }
+      const parsedState = HomeAttachStateSchema.safeParse(view.state.values);
+      if (!parsedState.success) {
+        await ack({
+          response_action: "errors",
+          errors: { [HOME_ATTACH_BLOCK]: "Select an OMP tmux session." },
+        });
+        return;
+      }
+      try {
+        const paneId = parsedState.data[HOME_ATTACH_BLOCK][HOME_ATTACH_INPUT].selected_option.value;
+        const selected = (await this.#launcher.listOmpSessions()).find((session) => session.paneId === paneId);
+        if (!selected) throw new Error("The selected OMP tmux pane is no longer available");
+        const pending = { name: selected.name, expiresAt: Date.now() + 15_000 };
+        this.#pendingTmuxAttachments.push(pending);
+        try {
+          await this.#launcher.enableSlackoff(paneId);
+        } catch (error) {
+          const index = this.#pendingTmuxAttachments.indexOf(pending);
+          if (index >= 0) this.#pendingTmuxAttachments.splice(index, 1);
+          throw error;
+        }
+        this.#homeNotice = `Enabling Slackoff in tmux session \`${selected.name}\`.`;
+        await ack();
+        await this.publishHome();
+      } catch (error) {
+        await ack({
+          response_action: "errors",
+          errors: {
+            [HOME_ATTACH_BLOCK]: error instanceof Error ? error.message : String(error),
+          },
+        });
+      }
     });
 
     this.#app.view(HOME_LAUNCH_VIEW, async ({ ack, body, view }) => {
@@ -307,7 +520,7 @@ export class SlackController {
       const parsed = DmMessageSchema.safeParse(event);
       if (!parsed.success) return;
       const message = parsed.data;
-      if (message.bot_id || message.subtype) return;
+      if (message.bot_id || (message.subtype && message.subtype !== "file_share")) return;
       if (message.user !== this.#config.userId) {
         console.warn(`Slackoff ignored a DM from unauthorized user ${message.user}`);
         return;
@@ -323,11 +536,86 @@ export class SlackController {
 
       const record = this.#registry.getByThread(message.channel, message.thread_ts);
       if (!record) return;
-      if (await this.#routeQuestionAnswer(record, message.text)) return;
-      await this.routeInstruction(record, message.text);
+      const { images, rejected } = await downloadSlackImages(message.files, this.#config.botToken);
+      if (rejected.length > 0) {
+        await this.#app.client.chat.postMessage({
+          channel: record.binding.channelId,
+          thread_ts: record.binding.threadTs,
+          text: `Skipped attachment${rejected.length === 1 ? "" : "s"}: ${rejected
+            .map(({ name, reason }) => `${escapeMrkdwn(name)} (${escapeMrkdwn(reason)})`)
+            .join(", ")}`,
+        });
+      }
+      const text = message.text.trim();
+      if (!text && images.length === 0) return;
+      const command = images.length === 0 ? parseThreadCommand(text) : undefined;
+      if (command) {
+        switch (command.kind) {
+          case "stop":
+            await this.stopTurn(record);
+            return;
+          case "close":
+            await this.closeSession(record);
+            return;
+          case "model": {
+            if (!record.socket || record.collapsed) return;
+            if (
+              !record.session.modelState.available.some(
+                (model) => `${model.provider}/${model.id}` === command.selector,
+              )
+            ) {
+              await this.#app.client.chat.postMessage({
+                channel: record.binding.channelId,
+                thread_ts: record.binding.threadTs,
+                text: `Unknown model selector: ${command.selector}`,
+              });
+              return;
+            }
+            record.socket.write(
+              encodeMessage({
+                type: "set_model",
+                sessionId: record.session.id,
+                commandId: randomUUID(),
+                selector: command.selector,
+              }),
+            );
+            return;
+          }
+          case "omp":
+            await this.routeSlashCommand(record, command.command);
+            return;
+        }
+      }
+      if (images.length === 0 && text && (await this.#routeQuestionAnswer(record, text))) return;
+      await this.routeInstruction(record, text, images);
     });
 
     
+
+    this.#app.action(MODEL_ACTION, async ({ ack, body, action }) => {
+      await ack();
+      const parsedBody = ActionBodySchema.safeParse(body);
+      const parsedAction = ModelActionSchema.safeParse(action);
+      if (!parsedBody.success || !parsedAction.success || parsedBody.data.user.id !== this.#config.userId) return;
+      const record = this.#registry.getByBindingId(parsedAction.data.block_id);
+      if (!record?.socket || record.collapsed) return;
+      if (
+        !record.session.modelState.available.some(
+          (model) => `${model.provider}/${model.id}` === parsedAction.data.selected_option.value,
+        )
+      ) {
+        await this.refreshRoot(record);
+        return;
+      }
+      record.socket.write(
+        encodeMessage({
+          type: "set_model",
+          sessionId: record.session.id,
+          commandId: randomUUID(),
+          selector: parsedAction.data.selected_option.value,
+        }),
+      );
+    });
 
     this.#app.action(STOP_ACTION, async ({ ack, body, action }) => {
       await ack();
@@ -341,11 +629,65 @@ export class SlackController {
 
     this.#app.action(CLOSE_THREAD_ACTION, async ({ ack, body, action }) => {
       await ack();
-      const parsedBody = ActionBodySchema.safeParse(body);
+      const parsedBody = HomeActionBodySchema.safeParse(body);
       const parsedAction = ActionValueSchema.safeParse(action);
       if (!parsedBody.success || !parsedAction.success || parsedBody.data.user.id !== this.#config.userId) return;
       const record = this.#registry.getByBindingId(parsedAction.data.value);
       if (!record) return;
+      const tmuxSessionName = await this.#resolveOmpTmuxSessionName(record);
+      await this.#app.client.views.open({
+        trigger_id: parsedBody.data.trigger_id,
+        view: buildCloseSessionModal(record.binding.bindingId, tmuxSessionName),
+      });
+    });
+
+    this.#app.view(CLOSE_SESSION_VIEW, async ({ ack, body, view }) => {
+      const parsedBody = HomeLaunchBodySchema.safeParse(body);
+      const parsedState = CloseSessionStateSchema.safeParse(view.state.values);
+      const binding = ActionValueSchema.safeParse({ value: view.private_metadata });
+      if (
+        !parsedBody.success ||
+        parsedBody.data.user.id !== this.#config.userId ||
+        !parsedState.success ||
+        !binding.success
+      ) {
+        await ack();
+        return;
+      }
+      const record = this.#registry.getByBindingId(binding.data.value);
+      if (!record) {
+        await ack({
+          response_action: "errors",
+          errors: { [CLOSE_SESSION_BLOCK]: "This Slackoff session is no longer active." },
+        });
+        return;
+      }
+      const choice = parsedState.data[CLOSE_SESSION_BLOCK][CLOSE_SESSION_INPUT].selected_option.value;
+      if (choice === CLOSE_AND_DELETE_TMUX) {
+        const tmuxSessionName = await this.#resolveOmpTmuxSessionName(record);
+        if (!tmuxSessionName) {
+          await ack({
+            response_action: "errors",
+            errors: { [CLOSE_SESSION_BLOCK]: "The OMP tmux session is no longer available." },
+          });
+          return;
+        }
+        try {
+          await this.#launcher.killOmpSession(tmuxSessionName);
+        } catch (error) {
+          await ack({
+            response_action: "errors",
+            errors: {
+              [CLOSE_SESSION_BLOCK]: error instanceof Error ? error.message : String(error),
+            },
+          });
+          return;
+        }
+        await ack();
+        await this.closeSession(record, false);
+        return;
+      }
+      await ack();
       await this.closeSession(record);
     });
 
@@ -383,6 +725,14 @@ export class SlackController {
         pending.multi,
         "answered",
       ),
+      metadata: buildQuestionMetadata({
+        sessionId: record.session.id,
+        bindingId: record.binding.bindingId,
+        questionId: pending.questionId,
+        multi: pending.multi,
+        state: "answered",
+        options: pending.options.map((label) => ({ label })),
+      }),
     });
     record.status = "working";
     record.activity = "Reply received";
@@ -390,7 +740,7 @@ export class SlackController {
     return true;
   }
 
-  async routeInstruction(record: ActiveSession, text: string): Promise<void> {
+  async routeInstruction(record: ActiveSession, text: string, images: readonly ImageInput[] = []): Promise<void> {
     if (record.collapsed || record.status === "disabled") return;
     if (!record.socket) {
       await this.#app.client.chat.postMessage({
@@ -403,10 +753,37 @@ export class SlackController {
 
     record.collapsed = false;
     record.status = "working";
-    record.activity = "Instruction queued";
+    record.activity = images.length > 0 ? "Image instruction queued" : "Instruction queued";
     this.scheduleRootRefresh(record);
     record.socket.write(
-      encodeMessage({ type: "instruction", sessionId: record.session.id, commandId: randomUUID(), text }),
+      encodeMessage({
+        type: "instruction",
+        sessionId: record.session.id,
+        commandId: randomUUID(),
+        text,
+        images: [...images],
+      }),
+    );
+  }
+
+  async routeSlashCommand(record: ActiveSession, command: string): Promise<void> {
+    if (record.collapsed || record.status === "disabled") return;
+    if (!record.socket) {
+      await this.#app.client.chat.postMessage({
+        channel: record.binding.channelId,
+        thread_ts: record.binding.threadTs,
+        text: "Session offline; OMP command was not delivered.",
+      });
+      return;
+    }
+
+    record.socket.write(
+      encodeMessage({
+        type: "execute_slash_command",
+        sessionId: record.session.id,
+        commandId: randomUUID(),
+        command,
+      }),
     );
   }
 
@@ -422,12 +799,26 @@ export class SlackController {
     await this.refreshRoot(record);
   }
 
-  async closeSession(record: ActiveSession): Promise<void> {
+  async #availableOmpTmuxSessions() {
+    const connected = new Set<string>();
+    for (const record of this.#registry.values()) {
+      if (!record.socket || record.collapsed) continue;
+      connected.add(record.session.tmuxSessionName ?? record.session.project);
+    }
+    return (await this.#launcher.listOmpSessions()).filter((session) => !connected.has(session.name));
+  }
+
+  async #resolveOmpTmuxSessionName(record: ActiveSession): Promise<string | undefined> {
+    const expected = record.session.tmuxSessionName ?? record.session.project;
+    return (await this.#launcher.listOmpSessions()).find((session) => session.name === expected)?.name;
+  }
+
+  async closeSession(record: ActiveSession, notifyClient = true): Promise<void> {
     record.collapsed = true;
     record.status = "disabled";
     record.activity = undefined;
     this.#closedBindings.add(record.binding.bindingId);
-    if (record.socket) {
+    if (notifyClient && record.socket) {
       record.socket.write(
         encodeMessage({ type: "stop", sessionId: record.session.id, commandId: randomUUID() }),
       );
@@ -436,6 +827,23 @@ export class SlackController {
       );
     }
     await this.refreshRoot(record);
+    this.scheduleHomeRefresh();
+  }
+
+  async postModelError(record: ActiveSession, error: string): Promise<void> {
+    await this.#app.client.chat.postMessage({
+      channel: record.binding.channelId,
+      thread_ts: record.binding.threadTs,
+      text: `Could not change model: ${error}`,
+    });
+  }
+
+  async postCommandError(record: ActiveSession, error: string): Promise<void> {
+    await this.#app.client.chat.postMessage({
+      channel: record.binding.channelId,
+      thread_ts: record.binding.threadTs,
+      text: `Could not execute OMP command: ${error}`,
+    });
   }
 
   #isDuplicateEvent(eventId: string): boolean {

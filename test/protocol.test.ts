@@ -2,28 +2,89 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ClientMessageSchema, PROTOCOL_VERSION, ServerMessageSchema } from "../src/protocol.js";
+const modelState = {
+  current: { provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+  available: [{ provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+};
+
 
 test("accepts the current register protocol", () => {
   const result = ClientMessageSchema.safeParse({
     type: "register",
     requestId: "request-1",
     protocolVersion: PROTOCOL_VERSION,
-    session: { id: "session-1", title: "Fix parser", project: "project" },
+    session: { id: "session-1", title: "Fix parser", project: "project", modelState },
   });
 
   assert.equal(result.success, true);
 });
 
-test("rejects a client with an incompatible protocol version", () => {
+test("accepts legacy register protocols without model state", () => {
   const result = ClientMessageSchema.safeParse({
     type: "register",
-    requestId: "request-1",
-    protocolVersion: 2,
+    requestId: "request-legacy",
+    protocolVersion: 1,
     session: { id: "session-1", title: "Fix parser", project: "project" },
+  });
+
+  assert.equal(result.success, true);
+  if (result.success && result.data.type === "register") {
+    assert.deepEqual(result.data.session.modelState, { available: [] });
+  }
+});
+
+test("rejects a client newer than the daemon protocol", () => {
+  const result = ClientMessageSchema.safeParse({
+    type: "register",
+    requestId: "request-newer",
+    protocolVersion: PROTOCOL_VERSION + 1,
+    session: { id: "session-1", title: "Fix parser", project: "project", modelState },
   });
 
   assert.equal(result.success, false);
 });
+test("accepts per-session model state and selection commands", () => {
+  const stateResult = ClientMessageSchema.safeParse({
+    type: "model_state",
+    sessionId: "session-1",
+    commandId: "command-1",
+    modelState,
+  });
+  const selectionResult = ServerMessageSchema.safeParse({
+    type: "set_model",
+    sessionId: "session-1",
+    commandId: "command-1",
+    selector: "openai-codex/gpt-5.6-sol",
+  });
+
+  assert.equal(stateResult.success, true);
+  assert.equal(selectionResult.success, true);
+});
+
+test("accepts live session title updates", () => {
+  assert.equal(
+    ClientMessageSchema.safeParse({
+      type: "session_title",
+      sessionId: "session-1",
+      title: "Investigate parser regression",
+    }).success,
+    true,
+  );
+});
+
+test("accepts one-line OMP slash commands and rejects prompts", () => {
+  const command = {
+    type: "execute_slash_command",
+    sessionId: "session-1",
+    commandId: "command-1",
+    command: "/compact keep the implementation details",
+  };
+
+  assert.equal(ServerMessageSchema.safeParse(command).success, true);
+  assert.equal(ServerMessageSchema.safeParse({ ...command, command: "plain prompt" }).success, false);
+  assert.equal(ServerMessageSchema.safeParse({ ...command, command: "/compact\nthen continue" }).success, false);
+});
+
 
 test("rejects an instruction without a command identifier", () => {
   const result = ServerMessageSchema.safeParse({
@@ -34,6 +95,31 @@ test("rejects an instruction without a command identifier", () => {
 
   assert.equal(result.success, false);
 });
+test("accepts image-only instructions and rejects empty instructions", () => {
+  const imageInstruction = {
+    type: "instruction",
+    sessionId: "session-1",
+    commandId: "command-1",
+    text: "",
+    images: [{ data: "iVBORw0KGgo=", mimeType: "image/png" }],
+  };
+
+  assert.equal(ServerMessageSchema.safeParse(imageInstruction).success, true);
+  assert.equal(ServerMessageSchema.safeParse({ ...imageInstruction, images: [] }).success, false);
+});
+
+test("rejects instructions with more than ten images", () => {
+  const result = ServerMessageSchema.safeParse({
+    type: "instruction",
+    sessionId: "session-1",
+    commandId: "command-1",
+    text: "",
+    images: Array.from({ length: 11 }, () => ({ data: "iVBORw0KGgo=", mimeType: "image/png" })),
+  });
+
+  assert.equal(result.success, false);
+});
+
 
 test("accepts a closed-session replacement notice", () => {
   const result = ServerMessageSchema.safeParse({
