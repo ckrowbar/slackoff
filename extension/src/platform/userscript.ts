@@ -37,7 +37,10 @@ type GmRequestFn = (details: {
   method: string;
   url: string;
   headers: Record<string, string>;
-  data: string;
+  data: string | ArrayBuffer;
+  anonymous?: boolean;
+  redirect?: "error";
+  timeout?: number;
   onload: (response: GmResponse) => void;
   onerror: () => void;
   ontimeout: () => void;
@@ -60,7 +63,7 @@ interface UserscriptGlobals {
   Notification?: NotificationLike;
   fetch?: (
     url: string,
-    init: { method: string; credentials: string; headers: Record<string, string>; body: string },
+    init: { method: string; credentials: "include" | "omit"; headers: Record<string, string>; body: string | ArrayBuffer; redirect?: "error" },
   ) => Promise<HttpResponseLike>;
   addEventListener?: (type: string, listener: (event: { key?: string | null }) => void) => void;
   removeEventListener?: (type: string, listener: (event: { key?: string | null }) => void) => void;
@@ -83,7 +86,7 @@ export function createUserscriptPlatform(): Platform {
     async call<T>(credential: SlackCredential, method: string, params: SlackParams): Promise<T> {
       const body = encodeSlackBody(params, credential.token);
       const sameOrigin = host.location?.origin === credential.origin;
-      const url = sameOrigin ? `/api/${method}` : `${credential.origin}/api/${method}`;
+      const url = sameOrigin ? `/api/${method}` : `https://slack.com/api/${method}`;
 
       let reply: RawReply;
       if (sameOrigin) {
@@ -97,6 +100,30 @@ export function createUserscriptPlatform(): Platform {
       const result = interpretSlackReply(reply.status, reply.retryAfter, reply.body);
       if (!result.ok) throw slackCallError(result.failure);
       return result.payload as T;
+    },
+
+    async upload(url, bytes, contentType): Promise<void> {
+      if (!isTrustedUploadUrl(url)) throw new Error("invalid_upload_url");
+      let status: number;
+      try {
+        if (typeof GM_xmlhttpRequest === "function") {
+          status = await grantedUpload(GM_xmlhttpRequest, url, bytes, contentType);
+        } else {
+          const request = host.fetch;
+          if (!request) throw new Error("no_transport");
+          const response = await request(url, {
+            method: "POST",
+            credentials: "omit",
+            headers: { "Content-Type": contentType },
+            redirect: "error",
+            body: bytes,
+          });
+          status = response.status;
+        }
+      } catch {
+        throw new Error("upload_failed");
+      }
+      if (status < 200 || status >= 300) throw new Error("upload_failed");
     },
 
     async getSettings(): Promise<StoredSettings> {
@@ -204,6 +231,7 @@ function grantedReply(request: GmRequestFn, url: string, body: string): Promise<
       url,
       headers: FORM_HEADERS,
       data: body,
+      timeout: 15_000,
       onload: (response) =>
         resolve({
           status: response.status,
@@ -214,6 +242,37 @@ function grantedReply(request: GmRequestFn, url: string, body: string): Promise<
       ontimeout: () => reject(slackCallError({ error: "timeout" })),
     });
   });
+}
+
+function grantedUpload(
+  request: GmRequestFn,
+  url: string,
+  bytes: ArrayBuffer,
+  contentType: string,
+): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  request({
+    method: "POST",
+    url,
+    headers: { "Content-Type": contentType },
+    data: bytes,
+    anonymous: true,
+    redirect: "error",
+    onload: (response) => resolve(response.status),
+    onerror: () => reject(new Error("upload_failed")),
+    ontimeout: () => reject(new Error("upload_failed")),
+  });
+  return promise;
+}
+
+function isTrustedUploadUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    const hostname = url.hostname.toLowerCase();
+    return url.protocol === "https:" && (hostname === "slack.com" || hostname.endsWith(".slack.com"));
+  } catch {
+    return false;
+  }
 }
 
 /** GM_xmlhttpRequest hands back headers as one raw block rather than a parsed map. */

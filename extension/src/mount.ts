@@ -3,153 +3,80 @@ import styles from "slackoff:styles";
 import { createSlackController } from "./app/controller.js";
 import type { Platform, SlackCredential, SlackParams } from "./platform.js";
 import type { ConsoleDescription } from "./settings.js";
-import { callSlack, discoverSlackoffChannel, findSlackoffChannel } from "./slack/api.js";
+import {
+  callSlack,
+  discoverSlackoffChannel,
+  findSlackoffChannel,
+  uploadSlackImages,
+} from "./slack/api.js";
 import { parseClientUrl, readCredentials } from "./slack/credentials.js";
 import { DEFAULT_SETTINGS } from "./types.js";
-import type { Controller, SessionView, StoredSettings } from "./types.js";
+import type { AppPreferences, Controller, SessionView, StoredSettings } from "./types.js";
 import { mountApp } from "./ui/app.js";
 
 /**
- * Decides when the console belongs on screen and owns the single host element it adds to Slack.
- * Transport-free: an MV3 content script and a Tampermonkey userscript both drive this by handing it
- * a Platform.
- *
- * Reversibility is the constraint that shapes this file. The only change made to Slack's DOM is the
- * host element plus one `data-slackoff-hidden` attribute on the pane being covered; the rule that
- * acts on that attribute is adopted as a constructed stylesheet, so it adds no node of its own and
- * works in the userscript build, which has no page-level stylesheet. Tearing down removes the host,
- * the attribute and the sheet, drops every observer and timer, and calls the UI's own teardown.
+ * Decides when the console belongs on screen and owns the single full-page host element it adds to
+ * Slack. Transport-free: an MV3 content script and a Tampermonkey userscript both drive this by
+ * handing it a Platform. Tearing down removes the host and favicon and stops the UI.
  */
 
 const POLL_INTERVAL_MS = 400;
 const HOST_ID = "slackoff-console-host";
 const ROOT_CLASS = "slackoff-console";
-const HIDDEN_ATTRIBUTE = "data-slackoff-hidden";
-const OVERLAY_Z_INDEX = "1000000";
-/** Below this, a matched pane is treated as a mis-match and the console fills to the viewport. */
-const MIN_USABLE_HEIGHT = 240;
-const HIDDEN_RULE = `[${HIDDEN_ATTRIBUTE}]{visibility:hidden !important;}`;
+const OVERLAY_Z_INDEX = "2147483647";
+const FAVICON_HREF =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234c8dff'/%3E%3Cpath d='M18 20h20c6 0 10 4 10 10s-4 10-10 10H29l-9 8v-8h-2V20zm10 8v5h12v-5H28z' fill='white'/%3E%3C/svg%3E";
 
-/**
- * Slack exposes no stable hook for its layout, so these are best-effort and deliberately ordered
- * from most to least specific. Every one of them is fragile and may break on a Slack release; the
- * miss case is a full-viewport overlay inset past the sidebar, which is still usable.
- */
-const PANE_SELECTORS = ['[data-qa="message_pane"]', ".p-workspace__primary_view"] as const;
-const SIDEBAR_SELECTORS = [
-  '[data-qa="workspace_sidebar"]',
-  ".p-client_workspace__sidebar",
-  ".p-tab_rail",
-] as const;
 
-interface Box {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-}
-
-/** The host element, its shadow root, and the geometry that keeps it over Slack's message pane. */
+/** Full-viewport host, isolated UI root, and active-state favicon. */
 class ConsoleOverlay {
   readonly #host = document.createElement("div");
   readonly #root = document.createElement("div");
   readonly #shadow: ShadowRoot;
-  readonly #hiddenSheet = new CSSStyleSheet();
-  #pane: HTMLElement | undefined;
-  #observer: ResizeObserver | undefined;
+  readonly #favicon = document.createElement("link");
   #teardown: (() => void) | undefined;
-  readonly #onWindowResize = (): void => this.#align();
 
   constructor() {
     this.#host.id = HOST_ID;
-    this.#host.style.cssText = `position:fixed;top:0;left:0;width:0;height:0;z-index:${OVERLAY_Z_INDEX};`;
-    // An open shadow root stops Slack's stylesheet reaching the console and vice versa.
+    this.#host.style.cssText =
+      `position:fixed;inset:0;width:100vw;height:100vh;z-index:${OVERLAY_Z_INDEX};`;
     this.#shadow = this.#host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = styles;
     this.#root.className = ROOT_CLASS;
+    this.#favicon.rel = "icon";
+    this.#favicon.type = "image/svg+xml";
+    this.#favicon.href = FAVICON_HREF;
     this.#shadow.append(style, this.#root);
-    this.#hiddenSheet.replaceSync(HIDDEN_RULE);
   }
 
-  mount(controller: Controller): void {
-    document.adoptedStyleSheets = [...document.adoptedStyleSheets, this.#hiddenSheet];
+  mount(controller: Controller, preferences: AppPreferences): void {
+    this.#root.dataset.theme = preferences.theme;
     document.body.append(this.#host);
-    this.#capturePane();
-    this.#align();
-    window.addEventListener("resize", this.#onWindowResize, { passive: true });
-    this.#teardown = mountApp(this.#root, controller);
+    document.head.append(this.#favicon);
+    try {
+      this.#teardown = mountApp(this.#root, controller, preferences);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.#root.textContent = `Slackoff failed to start: ${message}`;
+      throw error;
+    }
   }
 
-  /** Slack rebuilds its panes as the user navigates, so the tracked element is re-checked often. */
+  setTheme(theme: StoredSettings["theme"]): void {
+    this.#root.dataset.theme = theme;
+  }
+
   refresh(): void {
-    if (!this.#pane?.isConnected) this.#capturePane();
-    this.#align();
+    if (!this.#host.isConnected) document.body.append(this.#host);
+    if (!this.#favicon.isConnected) document.head.append(this.#favicon);
   }
 
   destroy(): void {
     this.#teardown?.();
     this.#teardown = undefined;
-    window.removeEventListener("resize", this.#onWindowResize);
-    this.#releasePane();
+    this.#favicon.remove();
     this.#host.remove();
-    document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
-      (sheet) => sheet !== this.#hiddenSheet,
-    );
-  }
-
-  #capturePane(): void {
-    this.#releasePane();
-
-    let pane: HTMLElement | null = null;
-    for (const selector of PANE_SELECTORS) {
-      pane = document.querySelector<HTMLElement>(selector);
-      if (pane) break;
-    }
-    if (!pane) return;
-
-    pane.setAttribute(HIDDEN_ATTRIBUTE, "");
-    this.#pane = pane;
-    this.#observer = new ResizeObserver(() => this.#align());
-    this.#observer.observe(pane);
-  }
-
-  #releasePane(): void {
-    this.#observer?.disconnect();
-    this.#observer = undefined;
-    this.#pane?.removeAttribute(HIDDEN_ATTRIBUTE);
-    this.#pane = undefined;
-  }
-
-  #align(): void {
-    const rect = this.#pane?.getBoundingClientRect();
-    const box: Box = rect && rect.width > 1 && rect.height > 1 ? this.#usableBox(rect) : this.#fallbackBox();
-    const style = this.#host.style;
-    style.top = `${Math.round(box.top)}px`;
-    style.left = `${Math.round(box.left)}px`;
-    style.width = `${Math.round(box.width)}px`;
-    style.height = `${Math.round(box.height)}px`;
-  }
-
-  /**
-   * A matched pane far shorter than the space below it means the selector found an inner wrapper
-   * rather than the real message area, which Slack is free to restructure. Extend down to the
-   * viewport bottom instead of rendering an unusable sliver. This is a no-op for a pane that
-   * already reaches the bottom, so the normal case keeps the pane's exact geometry.
-   */
-  #usableBox(rect: Box): Box {
-    const remaining = window.innerHeight - rect.top;
-    if (rect.height >= Math.min(MIN_USABLE_HEIGHT, remaining)) return rect;
-    return { top: rect.top, left: rect.left, width: rect.width, height: Math.max(rect.height, remaining) };
-  }
-
-  #fallbackBox(): Box {
-    let left = 0;
-    for (const selector of SIDEBAR_SELECTORS) {
-      const sidebar = document.querySelector<HTMLElement>(selector);
-      if (sidebar) left = Math.max(left, sidebar.getBoundingClientRect().right);
-    }
-    return { top: 0, left, width: Math.max(0, window.innerWidth - left), height: window.innerHeight };
   }
 }
 
@@ -209,6 +136,10 @@ export class ConsoleShell {
     this.#controller?.select(sessionId);
   }
 
+  async toggleEnabled(): Promise<void> {
+    await this.#platform.setSettings({ enabled: !this.#settings.enabled });
+  }
+
   async toggleTakeover(): Promise<void> {
     await this.#platform.setSettings({ takeover: !this.#settings.takeover });
   }
@@ -252,14 +183,14 @@ export class ConsoleShell {
     try {
       const channelId = this.#channelId;
       const credential = this.#credential();
-      if (!this.#settings.takeover || !channelId || !credential) {
+      if (!this.#settings.enabled || !this.#settings.takeover || !channelId || !credential) {
         this.#unmount();
         return;
       }
 
       const isTarget = await this.#isSlackoffDm(credential, channelId);
       // Discovery is asynchronous; the user may have navigated on in the meantime.
-      if (!isTarget || this.#channelId !== channelId || !this.#settings.takeover) {
+      if (!isTarget || this.#channelId !== channelId || !this.#settings.enabled || !this.#settings.takeover) {
         this.#unmount();
         return;
       }
@@ -314,6 +245,7 @@ export class ConsoleShell {
         this.#discovered = false;
       }
     }
+    this.#overlay?.setTheme(settings.theme);
     await this.#reconcile();
   }
 
@@ -330,7 +262,14 @@ export class ConsoleShell {
 
     const controller = this.#createController(credential, channelId);
     const overlay = new ConsoleOverlay();
-    overlay.mount(controller);
+    overlay.mount(controller, {
+      theme: this.#settings.theme,
+      sidebarWidth: this.#settings.sidebarWidth,
+      sidebarCollapsed: this.#settings.sidebarCollapsed,
+      setTheme: (theme) => this.#platform.setSettings({ theme }),
+      setSidebar: (sidebarWidth, sidebarCollapsed) =>
+        this.#platform.setSettings({ sidebarWidth, sidebarCollapsed }),
+    });
     controller.start();
     this.#overlay = overlay;
     this.#controller = controller;
@@ -354,6 +293,13 @@ export class ConsoleShell {
       now: () => Date.now(),
       setTimer: (callback: () => void, ms: number) => window.setTimeout(callback, ms),
       clearTimer: (id: number) => window.clearTimeout(id),
+      uploadImages: (threadTs, text, images) =>
+        uploadSlackImages(this.#platform, credential, {
+          channelId,
+          threadTs,
+          text,
+          images,
+        }),
       isVisible: () => document.visibilityState === "visible",
       onNotify: (session: SessionView) => {
         if (this.#settings.notifications) {

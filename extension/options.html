@@ -160,6 +160,12 @@
       <section>
         <h2>Preferences</h2>
         <div class="row">
+          <label class="toggle" for="enabled">
+            <input id="enabled" type="checkbox" />
+            Enable Slackoff Console
+          </label>
+        </div>
+        <div class="row">
           <label class="toggle" for="notifications">
             <input id="notifications" type="checkbox" />
             Desktop notification when a session needs you
@@ -168,7 +174,7 @@
         <div class="row">
           <label class="toggle" for="takeover">
             <input id="takeover" type="checkbox" />
-            Take over the Slack message pane by default
+            Take over the full Slack page by default
           </label>
         </div>
         <div class="row">
@@ -176,6 +182,7 @@
           <select id="theme">
             <option value="codex">Codex</option>
             <option value="slack">Slack</option>
+            <option value="light">Light</option>
           </select>
         </div>
       </section>

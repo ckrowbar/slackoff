@@ -1,6 +1,13 @@
+import { MAX_IMAGE_INPUT_BYTES } from "../../../src/image-inputs.js";
 import { parseSettings, SETTINGS_KEYS } from "../settings.js";
 import type { Platform, SlackCredential, SlackParams } from "../platform.js";
-import type { BackgroundRequest, BackgroundResponse, SlackCallRequest, StoredSettings } from "../types.js";
+import type {
+  BackgroundRequest,
+  BackgroundResponse,
+  SlackCallRequest,
+  SlackUploadRequest,
+  StoredSettings,
+} from "../types.js";
 
 /**
  * MV3 transport. Network goes through the service worker, because a content script cannot fetch a
@@ -35,6 +42,19 @@ export function createExtensionPlatform(): Platform {
       throw error;
     },
 
+    async upload(url, bytes, contentType): Promise<void> {
+      if (bytes.byteLength > MAX_IMAGE_INPUT_BYTES) throw new Error("image_limit_exceeded");
+      const request: SlackUploadRequest = {
+        type: "slack.upload",
+        url,
+        contentType,
+        body: encodeBase64(bytes),
+      };
+      const response = (await chrome.runtime.sendMessage(request)) as BackgroundResponse | undefined;
+      if (!response) throw new Error("background_unavailable");
+      if (!response.ok) throw new Error(response.error);
+    },
+
     getSettings,
 
     async setSettings(patch: Partial<StoredSettings>): Promise<void> {
@@ -66,4 +86,14 @@ export function createExtensionPlatform(): Platform {
       // chrome.commands already publishes the hotkey, and there is no other menu surface.
     },
   };
+}
+
+function encodeBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunks: string[] = [];
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + chunkSize)));
+  }
+  return btoa(chunks.join(""));
 }

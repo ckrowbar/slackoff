@@ -121,7 +121,7 @@ const INITIAL_THREADS = new Map<string, ThreadState>([
     oldestTs: "1710000001.000010",
     events: [
       event("1710000001.000010", 36, "user", "Build a dense, keyboard-first console for the Slackoff extension. Keep every untrusted transcript value out of innerHTML."),
-      event("1710000001.000020", 32, "assistant", "I mapped the controller boundary and kept the UI independent from Slack and browser APIs. The transcript renderer builds text, links, inline `code`, and fenced blocks as DOM nodes."),
+      event("1710000001.000020", 32, "assistant", "## Rendering status\n\nThe renderer now supports **readable Markdown** without trusting raw HTML.\n\n- Semantic headings and lists\n- Safe [links](https://developer.mozilla.org/)\n- Inline `code` and ~~obsolete text~~\n\n> Raw HTML stays text, so `<img src=x onerror=alert(1)>` cannot execute."),
       event("1710000001.000030", 24, "notice", "Synced 14 earlier thread messages."),
       event("1710000001.000040", 18, "assistant", "The keyed update path keeps session rows and transcript events stable across state changes.\n\n```ts\nfunction reconcile(events: readonly ThreadEvent[]): void {\n  const live = new Set(events.map((event) => event.ts));\n  for (const [ts, node] of nodes) {\n    if (!live.has(ts)) node.remove();\n  }\n}\n```\n\nReference: https://developer.mozilla.org/en-US/docs/Web/API/Node/replaceChild."),
       event("1710000001.000050", 8, "assistant", LONG_LINE),
@@ -262,6 +262,36 @@ export function createFixtureController(): Controller {
       await later(360, () => {
         thread.events = thread.events.map((item) => item.ts === ts ? { ts: item.ts, at: item.at, kind: item.kind, text: item.text } : item);
         updateSession(sessionId, (item) => ({ ...item, activity: "Thinking" }));
+        emit();
+      });
+    },
+    async sendImages(sessionId, text, images) {
+      await this.sendInstruction(
+        sessionId,
+        `${text.trim()}${text.trim() ? "\n\n" : ""}[Attached ${images.length} image${images.length === 1 ? "" : "s"}]`,
+      );
+    },
+    async createSession(request) {
+      if (!running) throw new Error("Fixture controller is stopped.");
+      await later(600, () => {
+        const sessionId = `fixture-${Date.now().toString(16)}`;
+        const project = request.cwd.split("/").filter(Boolean).at(-1) ?? request.cwd;
+        sessions = [
+          session(sessionId, request.name, project, "working", 0, 0, {
+            threadTs: `${Date.now() / 1000}`,
+            activity: "Starting",
+          }),
+          ...sessions,
+        ];
+        threads.set(sessionId, {
+          sessionId,
+          loading: false,
+          hasMore: false,
+          events: request.prompt
+            ? [event(`launch-${Date.now()}`, 0, "user", request.prompt)]
+            : [],
+        });
+        selectedSessionId = sessionId;
         emit();
       });
     },

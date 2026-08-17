@@ -144,7 +144,10 @@ Closing a session can close only the Slack binding or also terminate its tmux se
 
 ## Install Slackoff Console (optional)
 
-Slackoff works with normal Slack clients without the console. The console adds a session list, transcript view, composer, model picker, question controls, search, unread state, and keyboard navigation inside the Slack web app.
+Slackoff works with normal Slack clients without the console. The console covers the Slack web app
+with a session list, Markdown transcript, image composer, model picker, question controls, search,
+unread state, theme options, and keyboard navigation. You can also launch a detached OMP session
+from the console.
 
 ### Chrome extension
 

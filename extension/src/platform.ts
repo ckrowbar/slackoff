@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SupportedImageMimeType } from "../../src/image-inputs.js";
 
 import type { StoredSettings } from "./types.js";
 
@@ -28,6 +29,8 @@ export interface SlackCredential {
 
 export interface Platform {
   call<T>(credential: SlackCredential, method: string, params: SlackParams): Promise<T>;
+  /** Uploads raw bytes to a credential-free, one-time Slack upload URL. */
+  upload(url: string, bytes: ArrayBuffer, contentType: SupportedImageMimeType): Promise<void>;
   getSettings(): Promise<StoredSettings>;
   setSettings(patch: Partial<StoredSettings>): Promise<void>;
   /** Returns an unsubscribe. The listener receives the full settings, not a diff. */

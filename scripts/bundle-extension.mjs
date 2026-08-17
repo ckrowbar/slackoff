@@ -32,7 +32,7 @@ const USERSCRIPT_OUT = "slackoff-console.user.js";
 const USERSCRIPT_BANNER = `// ==UserScript==
 // @name         Slackoff Console
 // @namespace    io.github.ckrowbar.slackoff
-// @version      0.1.0
+// @version      0.1.4
 // @description  Coding-agent console for OMP sessions, rendered over your Slackoff DM
 // @author       ckrowbar
 // @match        https://app.slack.com/client/*
@@ -44,6 +44,7 @@ const USERSCRIPT_BANNER = `// ==UserScript==
 // @grant        GM_notification
 // @grant        GM_xmlhttpRequest
 // @connect      slack.com
+// @connect      *.slack.com
 // @noframes
 // ==/UserScript==`;
 

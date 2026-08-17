@@ -6,60 +6,175 @@ interface CachedEvent {
   signature: string;
 }
 
-function appendInline(parent: HTMLElement, text: string): void {
-  const tokenPattern = /(`[^`\n]+`|https?:\/\/[^\s<]+)/g;
+const INLINE_PATTERN =
+  /(`[^`\n]+`|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*\n]+)\*\*|~~([^~\n]+)~~|\*([^*\n]+)\*|https?:\/\/[^\s<]+)/g;
+
+function appendInline(parent: HTMLElement, text: string, allowLinks = true): void {
   let offset = 0;
-  for (const match of text.matchAll(tokenPattern)) {
+  for (const match of text.matchAll(INLINE_PATTERN)) {
     const index = match.index ?? 0;
     if (index > offset) parent.append(document.createTextNode(text.slice(offset, index)));
     const token = match[0];
     if (token.startsWith("`")) {
       parent.append(element("code", "inline-code", { text: token.slice(1, -1) }));
-    } else {
-      let href = token;
-      let suffix = "";
-      while (/[),.;!?]$/.test(href)) {
-        suffix = href.slice(-1) + suffix;
-        href = href.slice(0, -1);
-      }
-      const link = element("a", "transcript-link", { href, target: "_blank", rel: "noreferrer noopener", text: href });
+    } else if (match[2] !== undefined && allowLinks) {
+      const link = element("a", "transcript-link", {
+        href: match[3] ?? "",
+        target: "_blank",
+        rel: "noreferrer noopener",
+      });
+      appendInline(link, match[2], false);
       parent.append(link);
-      if (suffix) parent.append(document.createTextNode(suffix));
+    } else if (match[4] !== undefined) {
+      const strong = element("strong", "markdown-strong");
+      appendInline(strong, match[4]);
+      parent.append(strong);
+    } else if (match[5] !== undefined) {
+      const deleted = element("del", "markdown-deleted");
+      appendInline(deleted, match[5]);
+      parent.append(deleted);
+    } else if (match[6] !== undefined) {
+      const emphasis = element("em", "markdown-emphasis");
+      appendInline(emphasis, match[6]);
+      parent.append(emphasis);
+    } else if (match[2] !== undefined) {
+      parent.append(document.createTextNode(token));
+    } else if (allowLinks) {
+      appendBareLink(parent, token);
+    } else {
+      parent.append(document.createTextNode(token));
     }
     offset = index + token.length;
   }
   if (offset < text.length) parent.append(document.createTextNode(text.slice(offset)));
 }
 
+function appendBareLink(parent: HTMLElement, token: string): void {
+  let href = token;
+  let suffix = "";
+  while (/[),.;!?]$/.test(href)) {
+    suffix = href.slice(-1) + suffix;
+    href = href.slice(0, -1);
+  }
+  parent.append(element("a", "transcript-link", {
+    href,
+    target: "_blank",
+    rel: "noreferrer noopener",
+    text: href,
+  }));
+  if (suffix) parent.append(document.createTextNode(suffix));
+}
+
+function codeBlock(language: string, source: string): HTMLElement {
+  const block = element("div", "code-block");
+  const bar = element("div", "code-block__bar");
+  const copy = element("button", "code-block__copy", {
+    type: "button",
+    text: "Copy",
+    ariaLabel: `Copy ${language} code`,
+  });
+  copy.dataset.copy = source;
+  const pre = element("pre", "code-block__pre");
+  pre.append(element("code", "code-block__code", { text: source }));
+  bar.append(element("span", "code-block__language", { text: language }), copy);
+  block.append(bar, pre);
+  return block;
+}
+
+function appendParagraph(parent: HTMLElement, lines: readonly string[]): void {
+  const paragraph = element("p", "markdown-paragraph");
+  lines.forEach((line, index) => {
+    if (index > 0) paragraph.append(document.createElement("br"));
+    appendInline(paragraph, line);
+  });
+  parent.append(paragraph);
+}
+
 function appendRichText(parent: HTMLElement, text: string): void {
-  const fencePattern = /```([^\n`]*)\n?([\s\S]*?)```/g;
-  let offset = 0;
-  for (const match of text.matchAll(fencePattern)) {
-    const index = match.index ?? 0;
-    if (index > offset) {
-      const prose = element("div", "rich-prose");
-      appendInline(prose, text.slice(offset, index));
-      parent.append(prose);
+  const prose = element("div", "rich-prose");
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let paragraph: string[] = [];
+
+  const flushParagraph = (): void => {
+    if (paragraph.length > 0) appendParagraph(prose, paragraph);
+    paragraph = [];
+  };
+
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index] ?? "";
+    const fence = /^ {0,3}```\s*([^`]*)$/.exec(line);
+    if (fence) {
+      flushParagraph();
+      const source: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^ {0,3}```\s*$/.test(lines[index] ?? "")) {
+        source.push(lines[index] ?? "");
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      prose.append(codeBlock(fence[1]?.trim() || "code", source.join("\n")));
+      continue;
     }
-    const language = match[1]?.trim() || "code";
-    const source = match[2] ?? "";
-    const block = element("div", "code-block");
-    const bar = element("div", "code-block__bar");
-    const label = element("span", "code-block__language", { text: language });
-    const copy = element("button", "code-block__copy", { type: "button", text: "Copy", ariaLabel: `Copy ${language} code` });
-    copy.dataset.copy = source;
-    const pre = element("pre", "code-block__pre");
-    pre.append(element("code", "code-block__code", { text: source }));
-    bar.append(label, copy);
-    block.append(bar, pre);
-    parent.append(block);
-    offset = index + match[0].length;
+
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushParagraph();
+      const node = document.createElement(`h${heading[1]?.length ?? 1}`);
+      node.className = "markdown-heading";
+      appendInline(node, heading[2] ?? "");
+      prose.append(node);
+      index += 1;
+      continue;
+    }
+
+    if (/^ {0,3}>\s?/.test(line)) {
+      flushParagraph();
+      const quoted: string[] = [];
+      while (index < lines.length && /^ {0,3}>\s?/.test(lines[index] ?? "")) {
+        quoted.push((lines[index] ?? "").replace(/^ {0,3}>\s?/, ""));
+        index += 1;
+      }
+      const quote = element("blockquote", "markdown-blockquote");
+      appendParagraph(quote, quoted);
+      prose.append(quote);
+      continue;
+    }
+
+    const item = /^ {0,3}([-+*]|\d+\.)\s+(.+)$/.exec(line);
+    if (item) {
+      flushParagraph();
+      const ordered = /\d+\./.test(item[1] ?? "");
+      const list = document.createElement(ordered ? "ol" : "ul");
+      list.className = "markdown-list";
+      while (index < lines.length) {
+        const next = /^ {0,3}([-+*]|\d+\.)\s+(.+)$/.exec(lines[index] ?? "");
+        if (!next || /\d+\./.test(next[1] ?? "") !== ordered) break;
+        const listItem = document.createElement("li");
+        appendInline(listItem, next[2] ?? "");
+        list.append(listItem);
+        index += 1;
+      }
+      prose.append(list);
+      continue;
+    }
+
+    if (/^ {0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$/.test(line)) {
+      flushParagraph();
+      prose.append(document.createElement("hr"));
+      index += 1;
+      continue;
+    }
+
+    if (line.trim().length === 0) {
+      flushParagraph();
+      index += 1;
+      continue;
+    }
+    paragraph.push(line);
+    index += 1;
   }
-  if (offset < text.length || text.length === 0) {
-    const prose = element("div", "rich-prose");
-    appendInline(prose, text.slice(offset));
-    parent.append(prose);
-  }
+  flushParagraph();
+  parent.append(prose);
 }
 
 export class TranscriptView {

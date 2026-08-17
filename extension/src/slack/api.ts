@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { SESSION_METADATA_EVENT } from "../../../src/metadata.js";
 import type { Platform, SlackCredential, SlackParams } from "../platform.js";
+import type { ImageUpload } from "../types.js";
 
 /**
  * Slack Web API access, expressed against a Platform rather than a concrete transport, so the same
@@ -71,6 +72,48 @@ export interface SlackAuthResult {
   team_id: string;
   team?: string;
   url?: string;
+}
+
+const UploadUrlResultSchema = z.object({
+  upload_url: z.string().url(),
+  file_id: z.string().min(1),
+});
+
+export interface SlackImageUpload {
+  channelId: string;
+  threadTs: string;
+  text: string;
+  images: readonly ImageUpload[];
+}
+
+/**
+ * Slack's external upload protocol: reserve one URL per file, upload raw bytes, then atomically
+ * attach every staged file to the selected session thread.
+ */
+export async function uploadSlackImages(
+  platform: Platform,
+  credential: SlackCredential,
+  request: SlackImageUpload,
+): Promise<void> {
+  const files: { id: string; title: string }[] = [];
+  for (const image of request.images) {
+    const raw = await callSlack<unknown>(platform, credential, "files.getUploadURLExternal", {
+      filename: image.name,
+      length: image.bytes.byteLength,
+    });
+    const upload = UploadUrlResultSchema.safeParse(raw);
+    if (!upload.success) throw new Error("invalid_upload_response");
+    await platform.upload(upload.data.upload_url, image.bytes, image.mimeType);
+    files.push({ id: upload.data.file_id, title: image.name });
+  }
+
+  const text = request.text.trim();
+  await callSlack(platform, credential, "files.completeUploadExternal", {
+    files: JSON.stringify(files),
+    channel_id: request.channelId,
+    thread_ts: request.threadTs,
+    ...(text ? { initial_comment: text } : {}),
+  });
 }
 
 /* ---------- narrow wrappers ---------- */

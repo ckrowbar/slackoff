@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,7 +17,7 @@ test("normalizes a safe Home session launch", () => {
   try {
     const request = normalizeLaunchRequest({ name: "parser-fix", cwd: "~", prompt: " Fix the parser " }, home);
 
-    assert.deepEqual(request, { name: "parser-fix", cwd: home, prompt: "Fix the parser" });
+    assert.deepEqual(request, { name: "parser-fix", cwd: realpathSync(home), prompt: "Fix the parser" });
   } finally {
     rmSync(home, { recursive: true });
   }

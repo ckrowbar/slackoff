@@ -1,18 +1,20 @@
-import type { AppState, Controller, MountApp, SessionView, StatusFilter } from "../types.js";
+import type { AppState, Controller, MountApp, SessionView, StatusFilter, Theme } from "../types.js";
 import { Composer } from "./composer.js";
 import { ConfirmDialog } from "./confirm.js";
 import { element, modelLabel, statusLabel } from "./dom.js";
 import { installKeys } from "./keys.js";
 import { CommandPalette } from "./palette.js";
 import { filterSessions, SessionList } from "./session-list.js";
+import { SessionCreator } from "./session-create.js";
+import { SidebarLayout } from "./sidebar.js";
 import { TranscriptView } from "./transcript.js";
 
-export const mountApp: MountApp = (root: HTMLElement, controller: Controller): (() => void) => {
+export const mountApp: MountApp = (root, controller, preferences): (() => void) => {
   const hadRootClass = root.classList.contains("slackoff-console");
   const initialTheme = root.getAttribute("data-theme");
   const initialTabIndex = root.getAttribute("tabindex");
   root.classList.add("slackoff-console");
-  if (!root.dataset.theme) root.dataset.theme = "codex";
+  root.dataset.theme = preferences.theme;
   root.tabIndex = -1;
 
   let state = controller.getState();
@@ -43,11 +45,22 @@ export const mountApp: MountApp = (root: HTMLElement, controller: Controller): (
   const search = element("input", "search-box__input", { type: "search", placeholder: "Search sessions", autocomplete: "off", spellcheck: "false", ariaLabel: "Search sessions" });
   search.oninput = () => controller.setQuery(search.value);
   searchWrap.append(search);
+  const newSessionButton = element("button", "secondary-button topbar__new-session", {
+    type: "button",
+    text: "New session",
+  });
+  const themeToggle = element("button", "icon-button theme-toggle", { type: "button" });
+  const topbarActions = element("div", "topbar__actions");
+  topbarActions.append(newSessionButton, themeToggle);
   const count = element("span", "topbar__count");
-  topbar.append(brand, filters, searchWrap, count);
+  topbar.append(brand, filters, searchWrap, topbarActions, count);
 
   const body = element("div", "console-body");
   const rail = element("aside", "rail");
+  const railHeader = element("header", "rail__header");
+  const railTitle = element("h2", "rail__title", { text: "Sessions" });
+  const railCount = element("span", "rail__count");
+  railHeader.append(railTitle, railCount);
   const main = element("main", "main-pane");
   const sessionHeader = element("header", "session-header");
   const headingCopy = element("div", "session-header__copy");
@@ -108,26 +121,75 @@ export const mountApp: MountApp = (root: HTMLElement, controller: Controller): (
     timers.add(timer);
   }
 
+  let darkTheme: Exclude<Theme, "light"> = preferences.theme === "light" ? "codex" : preferences.theme;
+
+  function syncThemeToggle(): void {
+    const light = root.dataset.theme === "light";
+    if (!light && (root.dataset.theme === "codex" || root.dataset.theme === "slack")) {
+      darkTheme = root.dataset.theme;
+    }
+    const label = light ? "Use dark mode" : "Use light mode";
+    themeToggle.textContent = light ? "☾" : "☀";
+    themeToggle.title = label;
+    themeToggle.setAttribute("aria-label", label);
+    themeToggle.setAttribute("aria-pressed", String(light));
+  }
+
+  function toggleTheme(): void {
+    const theme: Theme = root.dataset.theme === "light" ? darkTheme : "light";
+    root.dataset.theme = theme;
+    syncThemeToggle();
+    void preferences.setTheme(theme)
+      .then(() => showToast(`${theme === "light" ? "Light" : "Dark"} mode enabled`))
+      .catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
+  }
+
+  syncThemeToggle();
+  const themeObserver = new MutationObserver(syncThemeToggle);
+  themeObserver.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+  themeToggle.onclick = toggleTheme;
+
+  const sidebarLayout = new SidebarLayout(root, body, rail, {
+    width: preferences.sidebarWidth,
+    collapsed: preferences.sidebarCollapsed,
+    save: (width, collapsed) => preferences.setSidebar(width, collapsed),
+    reportError: (message) => showToast(message, true),
+  });
+  brand.prepend(sidebarLayout.toggleButton);
+
+  const sessionCreator = new SessionCreator(async (request) => {
+    await controller.createSession(request);
+    showToast(`Session “${request.name}” created`);
+  });
+  newSessionButton.onclick = () => sessionCreator.open();
+
   const transcript = new TranscriptView(
     (sessionId, answers) => controller.answerQuestion(sessionId, answers),
     (sessionId, text) => controller.sendInstruction(sessionId, text),
     showToast,
   );
-  const composer = new Composer((sessionId, text) => controller.sendInstruction(sessionId, text), showToast);
+  const composer = new Composer(
+    (sessionId, text) => controller.sendInstruction(sessionId, text),
+    (sessionId, text, images) => controller.sendImages(sessionId, text, images),
+    showToast,
+  );
   const sessionList = new SessionList((sessionId) => {
     selectionRequested = true;
     controller.select(sessionId);
   });
-  rail.append(sessionList.node);
+  rail.append(railHeader, sessionList.node);
   main.append(sessionHeader, transcript.node, composer.node);
-  body.append(rail, main);
+  body.append(rail, sidebarLayout.resizer, main);
   shell.append(topbar, body, footer, toastArea, shortcutSheet, confirmDialog.node);
+  shell.append(sessionCreator.node);
   root.append(shell);
 
   function selectedSession(): SessionView | undefined {
-    const selected = state.sessions.find((session) => session.sessionId === state.selectedSessionId);
+    const selected = state.sessions.find(
+      (session) => session.sessionId === state.selectedSessionId && !session.collapsed,
+    );
     if (selected) selectedCache = selected;
-    else if (selectedCache?.sessionId !== state.selectedSessionId) selectedCache = undefined;
+    else if (!selectedCache || selectedCache.sessionId !== state.selectedSessionId || selectedCache.collapsed) selectedCache = undefined;
     return selected ?? selectedCache;
   }
   function revealAndSelect(sessionId: string): void {
@@ -157,10 +219,7 @@ export const mountApp: MountApp = (root: HTMLElement, controller: Controller): (
     setModel: (sessionId, selector) => void controller.setModel(sessionId, selector).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true)),
     close: (sessionId) => void confirmClose(sessionId),
     refresh: () => void controller.refresh().then(() => showToast("Sync complete")).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true)),
-    toggleTheme: () => {
-      root.dataset.theme = root.dataset.theme === "slack" ? "codex" : "slack";
-      showToast(`${root.dataset.theme === "slack" ? "Slack" : "Codex"} theme enabled`);
-    },
+    toggleTheme,
   });
   root.append(palette.node);
 
@@ -179,23 +238,40 @@ export const mountApp: MountApp = (root: HTMLElement, controller: Controller): (
 
   function render(next: AppState): void {
     state = next;
-    visibleSessions = filterSessions(state.sessions, state.filter, state.query);
+    const openSessions = state.sessions.filter((session) => !session.collapsed);
+    visibleSessions = filterSessions(openSessions, state.filter, state.query);
     const selected = selectedSession();
+    if (!selected && visibleSessions[0]) {
+      selectionRequested = true;
+      controller.select(visibleSessions[0].sessionId);
+      return;
+    }
     connectionDot.dataset.phase = state.connection.phase;
     const connectionTitle = state.connection.phase === "connecting" ? "Connecting to Slack" : state.connection.phase === "ready" ? `Connected · synced ${new Date(state.connection.lastSyncAt).toLocaleTimeString()}` : state.connection.message;
     connectionDot.title = connectionTitle;
     connectionDot.setAttribute("aria-label", connectionTitle);
     workspace.textContent = state.connection.phase === "ready" ? state.connection.team : "Slackoff Console";
     count.textContent = `${visibleSessions.length} session${visibleSessions.length === 1 ? "" : "s"}`;
+    railCount.textContent = `${visibleSessions.length} open`;
     for (const [filter, button] of filterButtons) {
       const active = filter === state.filter;
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", String(active));
     }
+    const emptyCopy =
+      state.connection.phase === "connecting"
+        ? "Connecting to Slack…"
+        : state.connection.phase === "error"
+          ? `Slack sync failed: ${state.connection.message}`
+          : "Start a new session or wait for an open Slackoff thread.";
     if (!search.matches(":focus") && search.value !== state.query) search.value = state.query;
 
-    sessionList.update(visibleSessions, state.selectedSessionId);
-    for (const session of state.sessions) paletteSessions.set(session.sessionId, session);
+    sessionList.update(visibleSessions, state.selectedSessionId, Date.now(), emptyCopy);
+    const openSessionIds = new Set(openSessions.map((session) => session.sessionId));
+    for (const session of openSessions) paletteSessions.set(session.sessionId, session);
+    for (const [sessionId] of paletteSessions) {
+      if (!openSessionIds.has(sessionId)) paletteSessions.delete(sessionId);
+    }
     palette.update([...paletteSessions.values()], selected);
     sessionHeader.hidden = !selected;
     if (selected) {
@@ -291,6 +367,9 @@ export const mountApp: MountApp = (root: HTMLElement, controller: Controller): (
     for (const timer of timers) window.clearTimeout(timer);
     timers.clear();
     removeKeys();
+    newSessionButton.onclick = null;
+    themeObserver.disconnect();
+    themeToggle.onclick = null;
     unsubscribe();
     controller.stop();
     search.oninput = null;
@@ -299,7 +378,9 @@ export const mountApp: MountApp = (root: HTMLElement, controller: Controller): (
     closeButton.onclick = null;
     shortcutClose.onclick = null;
     shortcutSheet.onclick = null;
+    sidebarLayout.destroy();
     for (const button of filterButtons.values()) button.onclick = null;
+    sessionCreator.destroy();
     sessionList.destroy();
     transcript.destroy();
     composer.destroy();

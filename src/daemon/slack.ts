@@ -14,6 +14,11 @@ import {
   type MessageMetadata,
 } from "../metadata.js";
 import {
+  parseSessionLaunchRequest,
+  SESSION_LAUNCH_FAILURE_PREFIX,
+  SESSION_LAUNCH_SUCCESS_PREFIX,
+} from "../session-launch.js";
+import {
   encodeMessage,
   type ImageInput,
   type QuestionRequest,
@@ -523,6 +528,32 @@ export class SlackController {
       if (message.bot_id || (message.subtype && message.subtype !== "file_share")) return;
       if (message.user !== this.#config.userId) {
         console.warn(`Slackoff ignored a DM from unauthorized user ${message.user}`);
+        return;
+      }
+
+      const launchRequest = !message.thread_ts
+        ? parseSessionLaunchRequest(message.text.trim())
+        : undefined;
+      if (launchRequest) {
+        let resultText: string;
+        try {
+          const launched = await this.#launcher.launch(launchRequest);
+          resultText = `${SESSION_LAUNCH_SUCCESS_PREFIX}${launched.name}`;
+        } catch (error) {
+          resultText = `${SESSION_LAUNCH_FAILURE_PREFIX}${error instanceof Error ? error.message : String(error)}`;
+        }
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            await this.#app.client.chat.postMessage({
+              channel: message.channel,
+              thread_ts: message.ts,
+              text: resultText,
+            });
+            break;
+          } catch {
+            if (attempt === 2) console.error("Slackoff could not post a session launch result");
+          }
+        }
         return;
       }
 

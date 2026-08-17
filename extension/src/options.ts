@@ -14,6 +14,7 @@ const STATUS_CLEAR_MS = 2000;
 const workspaceList = requireElement<HTMLUListElement>("workspaces");
 const channelLabel = requireElement<HTMLSpanElement>("channel");
 const detectButton = requireElement<HTMLButtonElement>("detect");
+const enabledInput = requireElement<HTMLInputElement>("enabled");
 const notificationsInput = requireElement<HTMLInputElement>("notifications");
 const takeoverInput = requireElement<HTMLInputElement>("takeover");
 const themeSelect = requireElement<HTMLSelectElement>("theme");
@@ -21,6 +22,10 @@ const openTabButton = requireElement<HTMLButtonElement>("open-tab");
 const statusLabel = requireElement<HTMLDivElement>("status");
 
 let statusTimer: number | undefined;
+
+enabledInput.addEventListener("change", () => {
+  void save({ enabled: enabledInput.checked });
+});
 
 notificationsInput.addEventListener("change", () => {
   void save({ notifications: notificationsInput.checked });
@@ -31,7 +36,8 @@ takeoverInput.addEventListener("change", () => {
 });
 
 themeSelect.addEventListener("change", () => {
-  void save({ theme: themeSelect.value === "slack" ? "slack" : "codex" });
+  const theme = themeSelect.value;
+  void save({ theme: theme === "slack" || theme === "light" ? theme : "codex" });
 });
 
 detectButton.addEventListener("click", () => {
@@ -52,6 +58,7 @@ void render();
 
 async function render(): Promise<void> {
   const settings = await platform.getSettings();
+  enabledInput.checked = settings.enabled;
   notificationsInput.checked = settings.notifications;
   takeoverInput.checked = settings.takeover;
   themeSelect.value = settings.theme;

@@ -32,24 +32,30 @@ authentication.
 
 ## Either way
 
-Open the Slackoff DM in Slack. The console detects that conversation and takes over the message
-pane. Any other channel renders as stock Slack.
+Open the Slackoff DM in Slack. The console detects that conversation and covers the full Slack page.
+Any other channel renders as stock Slack.
 
 `Alt+Shift+O` (`Command+Shift+O` on macOS) toggles the takeover, as does the toolbar icon in the
 extension build. Chrome reserves `Ctrl+Shift+O` for the bookmark manager, which is why the default
-differs. The userscript's settings surface is the Tampermonkey menu: **Toggle takeover**,
-**Re-detect Slackoff DM**, and **Toggle notifications**. The extension build uses its options page
-instead.
+differs. The userscript menu includes **Toggle Slackoff script**, **Toggle takeover**,
+**Re-detect Slackoff DM**, and **Toggle notifications**. Use **Toggle Slackoff script** to unmount
+the userscript until you turn it on again. The extension build uses its options page instead.
 
 ## What it shows
 
-Sessions are grouped by what they need from you: **Needs you**, **Working**, **Ready**, **Done**,
-**Closed**. Each row carries the status, project, model, relative time, and an unread count.
+Sessions are grouped by what they need from you: **Needs you**, **Working**, **Ready**, and
+**Done**. Closed threads are hidden. Each row shows status, project, model, relative time, and unread
+count.
+
+The session sidebar can be collapsed or resized by dragging its divider. Focus the divider and use
+the arrow keys to resize it in 16-pixel steps. The console remembers both settings.
+
+The transcript renders headings, lists, emphasis, links, blockquotes, inline code, and fenced code.
+It treats raw HTML as text.
 
 State comes from the structured metadata the daemon attaches to each message. Messages posted
-before that existed are parsed from their Block Kit blocks instead, which recovers everything except
-the full session id, the untruncated title, and the model list. Those cards therefore show a short
-id and no model picker until the session next updates its card.
+before that existed are parsed from their Block Kit blocks instead. Those cards may show a short id
+and no model picker until the session next updates its card.
 
 ## Controls
 
@@ -61,6 +67,8 @@ id and no model picker until the session next updates its card.
 | Switch model | `!model <provider>/<id>` |
 | Run an OMP slash command | `!omp <command> [arguments]` |
 | Close thread | `!close` |
+| Add images | the image files, with optional instruction text |
+| Create session | a top-level launch request with name, working directory, and optional prompt |
 
 The `!` controls are recognised by the daemon (`src/daemon/commands.ts`). Use `!omp compact`,
 `!omp model <provider>/<id>`, or `!omp skill:<name> [arguments]`; omit the slash that OMP normally
@@ -69,31 +77,26 @@ that merely starts with `!stop`, is delivered as an instruction exactly as befor
 
 ## Keyboard
 
-`j` / `k` or arrows move between sessions. `Enter` focuses the composer, `Shift+Enter` inserts a
-newline, `Cmd/Ctrl+Enter` also sends. `1`–`9` answer a pending question. `Cmd/Ctrl+K` opens the
-command palette, which is the fastest way to switch model when a session offers dozens. `g` then `a`
-jumps to the first session waiting on you. `Escape` leaves the composer, then offers to stop.
-`?` lists every shortcut.
+`j` / `k` or arrows move between sessions. `Enter` focuses the composer and sends from it.
+`Shift+Enter` inserts a newline. `1` to `9` answer a pending question. `Cmd/Ctrl+K` opens the command
+palette, which is the fastest way to switch model when a session offers dozens. `g` then `a` jumps
+to the first session waiting on you. `Escape` leaves the composer, then offers to stop. `?` lists
+every shortcut.
 
-## What it never does
+## What it changes
 
-It only reads messages and posts new ones. It never edits or deletes a Slack message, and it never
-changes your Slack settings. Inside the page it adds one host element and sets one
-`data-slackoff-hidden` attribute on the pane it covers; both are removed when you toggle the
-takeover off, navigate elsewhere, or disable the extension.
+The console posts instructions, answers, controls, launch requests, and image files through Slack.
+It never edits or deletes an existing Slack message. It does not change your Slack settings.
 
-Session tokens are read from the Slack tab, kept in memory, and never written to storage or a log.
-Only the resolved DM channel id and your preferences persist, in `chrome.storage.local` for the
-extension and under the single `GM_setValue` key `slackoff-console:settings` for the userscript.
+The console adds one full-page host element and one favicon link while it is active. It removes both
+when you toggle the takeover off, navigate elsewhere, or disable the script or extension.
 
-## Known fragility
+Session tokens stay in memory. Slackoff never writes them to storage or logs. The console also keeps
+one-time image upload URLs out of the DOM and error messages.
 
-Positioning the console over Slack's message pane depends on Slack's internal DOM, tried in order:
-`[data-qa="message_pane"]`, then `.p-workspace__primary_view`. A Slack release can change these. The
-failure mode is degraded, not broken. If neither matches, the console falls back to a full-viewport
-overlay inset past the sidebar and leaves Slack's pane untouched. If one matches but is implausibly
-short, which is what a mis-matched inner wrapper looks like, the console fills down to the viewport
-bottom rather than rendering a sliver.
+Only the resolved DM channel id and your preferences persist. The extension uses
+`chrome.storage.local`. The userscript uses the single `GM_setValue` key
+`slackoff-console:settings`.
 
 ## Development
 

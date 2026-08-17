@@ -193,7 +193,7 @@ export class CommandPalette {
     }
     items.push(
       { id: "refresh", label: "Retry sync", detail: "Refresh sessions and transcripts", keywords: "reload reconnect", priority: 100, run: () => { this.close(); this.#actions.refresh(); } },
-      { id: "theme", label: "Toggle theme", detail: "Codex / Slack", keywords: "appearance colour color", priority: 90, run: () => { this.close(); this.#actions.toggleTheme(); } },
+      { id: "theme", label: "Cycle theme", detail: "Codex / Light / Slack", keywords: "appearance colour color", priority: 90, run: () => { this.close(); this.#actions.toggleTheme(); } },
     );
     const newest = Math.max(...this.#sessions.map((session) => session.updatedAt), 0);
     this.#sessions.forEach((session) => {

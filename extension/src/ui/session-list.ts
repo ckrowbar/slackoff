@@ -1,11 +1,10 @@
 import type { SessionView, StatusFilter } from "../types.js";
 import { element, formatRelativeTime, modelLabel, replaceChildren } from "./dom.js";
 
-const GROUPS = ["Needs you", "Working", "Ready", "Done", "Closed"] as const;
+const GROUPS = ["Needs you", "Working", "Ready", "Done"] as const;
 type GroupName = (typeof GROUPS)[number];
 
 function groupFor(session: SessionView): GroupName {
-  if (session.collapsed) return "Closed";
   if (session.pendingQuestion || session.status === "waiting") return "Needs you";
   if (session.status === "working" || session.status === "stopping") return "Working";
   if (session.status === "idle") return "Ready";
@@ -16,6 +15,7 @@ export function filterSessions(sessions: readonly SessionView[], filter: StatusF
   const needle = query.trim().toLocaleLowerCase();
   return sessions
     .filter((session) => {
+      if (session.collapsed) return false;
       if (filter === "attention" && groupFor(session) !== "Needs you") return false;
       if (filter === "active" && !["waiting", "working", "stopping"].includes(session.status)) return false;
       if (!needle) return true;
@@ -38,6 +38,8 @@ interface SessionRow {
 export class SessionList {
   readonly node = element("nav", "session-list", { ariaLabel: "Sessions" });
   #rows = new Map<string, SessionRow>();
+  #empty = element("div", "session-list__empty");
+  #emptyCopy = element("span", "session-list__empty-copy");
   #sections = new Map<GroupName, HTMLElement>();
   #bodies = new Map<GroupName, HTMLElement>();
   #select: (sessionId: string) => void;
@@ -52,9 +54,20 @@ export class SessionList {
       this.#sections.set(group, section);
       this.#bodies.set(group, body);
     }
+    this.#empty.append(
+      element("strong", "session-list__empty-title", { text: "No open sessions" }),
+      this.#emptyCopy,
+    );
+    this.#emptyCopy.textContent = "Start a new session or wait for Slackoff to connect.";
   }
 
-  update(sessions: readonly SessionView[], selectedSessionId: string | undefined, now = Date.now()): void {
+  update(
+    sessions: readonly SessionView[],
+    selectedSessionId: string | undefined,
+    now = Date.now(),
+    emptyCopy = "Start a new session or wait for Slackoff to connect.",
+  ): void {
+    this.#emptyCopy.textContent = emptyCopy;
     const byGroup = new Map<GroupName, SessionView[]>(GROUPS.map((group) => [group, []]));
     for (const session of sessions) byGroup.get(groupFor(session))?.push(session);
 
@@ -64,6 +77,10 @@ export class SessionList {
       row.node.onclick = null;
       row.node.remove();
       this.#rows.delete(sessionId);
+    }
+    if (sessions.length === 0) {
+      replaceChildren(this.node, [this.#empty]);
+      return;
     }
 
     const visibleSections: Node[] = [];

@@ -476,15 +476,16 @@ export interface ReducedThread {
 }
 
 /** Order replies oldest first, drop the root card, and resolve the single live question. */
-export function reduceThread(messages: readonly unknown[]): ReducedThread {
-  const replies: RawSlackMessage[] = [];
-  for (const message of messages) {
-    const parsed = RawSlackMessageSchema.safeParse(message);
-    if (!parsed.success) continue;
-    const raw = parsed.data;
-    if (raw.thread_ts === undefined || raw.thread_ts === raw.ts) continue;
-    replies.push(raw);
-  }
+export function reduceThread(messages: readonly unknown[], expectedRootTs?: string): ReducedThread {
+  const parsed = messages
+    .map((message) => RawSlackMessageSchema.safeParse(message))
+    .filter((result) => result.success)
+    .map((result) => result.data);
+  const inferredRoot =
+    parsed.find((message) => message.thread_ts === message.ts) ??
+    parsed.find((message) => message.thread_ts === undefined);
+  const rootTs = expectedRootTs ?? inferredRoot?.ts;
+  const replies = parsed.filter((message) => message.ts !== rootTs && message.thread_ts !== message.ts);
   replies.sort((left, right) => compareTs(left.ts, right.ts));
   const events = replies.map((reply) => parseThreadMessage(reply));
 

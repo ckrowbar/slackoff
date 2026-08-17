@@ -1,4 +1,6 @@
 import type { SessionStatus } from "../../src/protocol.js";
+import type { SupportedImageMimeType } from "../../src/image-inputs.js";
+import type { SessionLaunchRequest } from "../../src/session-launch.js";
 
 /**
  * Contract between the three extension layers.
@@ -31,6 +33,12 @@ export interface ModelOption {
   name: string;
   /** "provider/id", the selector the daemon expects. */
   selector: string;
+}
+
+export interface ImageUpload {
+  name: string;
+  mimeType: SupportedImageMimeType;
+  bytes: ArrayBuffer;
 }
 
 export interface SessionView {
@@ -126,6 +134,8 @@ export interface Controller {
   refresh(): Promise<void>;
   loadMore(): Promise<void>;
   sendInstruction(sessionId: string, text: string): Promise<void>;
+  sendImages(sessionId: string, text: string, images: readonly ImageUpload[]): Promise<void>;
+  createSession(request: SessionLaunchRequest): Promise<void>;
   /** `answers` are option labels for a choice question, or one free-text string. */
   answerQuestion(sessionId: string, answers: readonly string[]): Promise<void>;
   stopTurn(sessionId: string): Promise<void>;
@@ -133,8 +143,16 @@ export interface Controller {
   closeThread(sessionId: string): Promise<void>;
 }
 
+export interface AppPreferences {
+  theme: Theme;
+  setTheme(theme: Theme): Promise<void>;
+  sidebarWidth: number;
+  sidebarCollapsed: boolean;
+  setSidebar(width: number, collapsed: boolean): Promise<void>;
+}
+
 /** Mounts the UI. Returns a teardown that removes every node and listener it added. */
-export type MountApp = (root: HTMLElement, controller: Controller) => () => void;
+export type MountApp = (root: HTMLElement, controller: Controller, preferences: AppPreferences) => () => void;
 
 /* ---------- content script <-> background service worker ---------- */
 
@@ -145,6 +163,13 @@ export interface SlackCallRequest {
   method: string;
   token: string;
   params: Record<string, string | number | boolean>;
+}
+
+export interface SlackUploadRequest {
+  type: "slack.upload";
+  url: string;
+  contentType: SupportedImageMimeType;
+  body: string;
 }
 
 export interface NotifyRequest {
@@ -164,11 +189,18 @@ export interface FocusRequest {
   sessionId: string;
 }
 
-export type BackgroundRequest = SlackCallRequest | NotifyRequest | BadgeRequest | FocusRequest;
+export type BackgroundRequest =
+  | SlackCallRequest
+  | SlackUploadRequest
+  | NotifyRequest
+  | BadgeRequest
+  | FocusRequest;
 
 export type BackgroundResponse<T = unknown> =
   | { ok: true; data: T }
   | { ok: false; error: string; status?: number; retryAfterMs?: number };
+
+export type Theme = "codex" | "slack" | "light";
 
 /** Persisted in chrome.storage.local. */
 export interface StoredSettings {
@@ -178,14 +210,20 @@ export interface StoredSettings {
   channelId?: string;
   /** Slack user id the DM belongs to. */
   userId?: string;
+  enabled: boolean;
   notifications: boolean;
   /** Takeover on by default; toggled with the hotkey. */
   takeover: boolean;
-  theme: "codex" | "slack";
+  theme: Theme;
+  sidebarWidth: number;
+  sidebarCollapsed: boolean;
 }
 
 export const DEFAULT_SETTINGS: StoredSettings = {
+  enabled: true,
   notifications: true,
   takeover: true,
   theme: "codex",
+  sidebarWidth: 360,
+  sidebarCollapsed: false,
 };

@@ -636,6 +636,18 @@ test("reduceThread orders replies, drops the root, and exposes the live question
   assert.equal(pendingQuestion?.ts, "1770000106.000700");
 });
 
+test("reduceThread keeps contextual replies when Slack omits thread_ts", () => {
+  const replyWithoutThreadTs = { ...assistantReply, thread_ts: undefined };
+  const { events } = reduceThread([metadataRoot, replyWithoutThreadTs]);
+  assert.deepEqual(events.map((event) => event.text), ["Patched src/api.ts & the tests"]);
+});
+
+test("reduceThread uses the expected root timestamp when unthreaded replies arrive first", () => {
+  const replyWithoutThreadTs = { ...assistantReply, thread_ts: undefined };
+  const { events } = reduceThread([replyWithoutThreadTs, { ...metadataRoot, thread_ts: undefined }], ROOT_TS);
+  assert.deepEqual(events.map((event) => event.text), ["Patched src/api.ts & the tests"]);
+});
+
 test("reduceThread treats a superseded question as settled", () => {
   const { pendingQuestion } = reduceThread([metadataRoot, waitingQuestion, answeredQuestion]);
   assert.equal(pendingQuestion, undefined);

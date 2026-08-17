@@ -1,9 +1,9 @@
 import type { ImageInput } from "../protocol.js";
+import { MAX_IMAGE_INPUT_BYTES, MAX_IMAGE_INPUTS, SUPPORTED_IMAGE_MIME_TYPES } from "../image-inputs.js";
 
-export const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
-export const MAX_IMAGE_INPUTS = 10;
+export { MAX_IMAGE_INPUT_BYTES, MAX_IMAGE_INPUTS } from "../image-inputs.js";
 
-const SUPPORTED_DECLARED_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]);
+const SUPPORTED_DECLARED_MIME_TYPES = new Set<string>(SUPPORTED_IMAGE_MIME_TYPES);
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
 const GIF87A_MAGIC = Buffer.from("GIF87a", "ascii");
@@ -62,11 +62,16 @@ export async function downloadSlackImages(
       rejected.push({ name, reason: "Slack did not provide a download URL" });
       continue;
     }
+    if (!isTrustedSlackFileUrl(url)) {
+      rejected.push({ name, reason: "Slack provided an invalid download URL" });
+      continue;
+    }
 
     try {
       const response = await fetchImpl(url, {
         headers: { Authorization: `Bearer ${botToken}` },
-        redirect: "follow",
+        redirect: "error",
+        credentials: "omit",
       });
       if (!response.ok) {
         rejected.push({ name, reason: `Slack download failed with HTTP ${response.status}` });
@@ -92,6 +97,16 @@ export async function downloadSlackImages(
 }
 
 class ImageLimitError extends Error {}
+
+function isTrustedSlackFileUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    const hostname = url.hostname.toLowerCase();
+    return url.protocol === "https:" && (hostname === "slack.com" || hostname.endsWith(".slack.com"));
+  } catch {
+    return false;
+  }
+}
 
 async function readBoundedBody(response: Response, maximumBytes: number): Promise<Buffer> {
   const contentLength = Number(response.headers.get("content-length"));

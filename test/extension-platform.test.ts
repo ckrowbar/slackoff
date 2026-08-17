@@ -27,7 +27,7 @@ interface FetchInit {
   method: string;
   credentials: string;
   headers: Record<string, string>;
-  body: string;
+  body: string | ArrayBuffer;
 }
 
 interface StubReply {
@@ -200,28 +200,78 @@ test("a blocked cross-origin call names the missing @connect grant", async () =>
   }
 });
 
+test("userscript uploads raw image bytes without credentials", async () => {
+  const stub = stubPage({ reply: { status: 200, body: "" } });
+  try {
+    const bytes = new Uint8Array([0, 1, 127, 255]).buffer;
+    await createUserscriptPlatform().upload(
+      "https://files.slack.com/upload/v1/test",
+      bytes,
+      "image/png",
+    );
+
+    const call = stub.calls[0];
+    assert.ok(call);
+    assert.equal(call.url, "https://files.slack.com/upload/v1/test");
+    assert.equal(call.init.credentials, "omit");
+    assert.equal(call.init.headers["Content-Type"], "image/png");
+    assert.deepEqual(new Uint8Array(call.init.body as ArrayBuffer), new Uint8Array(bytes));
+  } finally {
+    stub.restore();
+  }
+});
+
+test("userscript rejects non-Slack upload destinations before sending bytes", async () => {
+  const stub = stubPage();
+  try {
+    await assert.rejects(
+      createUserscriptPlatform().upload(
+        "https://slack.com.attacker.invalid/upload",
+        new Uint8Array([1]).buffer,
+        "image/png",
+      ),
+      /invalid_upload_url/,
+    );
+    assert.equal(stub.calls.length, 0);
+  } finally {
+    stub.restore();
+  }
+});
+
 test("settings round-trip through the localStorage fallback", async () => {
   const stub = stubPage();
   try {
     const platform = createUserscriptPlatform();
     assert.deepEqual(await platform.getSettings(), DEFAULT_SETTINGS);
 
-    await platform.setSettings({ takeover: false, channelId: "D0BNVUT538S", theme: "slack" });
+    await platform.setSettings({
+      takeover: false,
+      channelId: "D0BNVUT538S",
+      theme: "slack",
+      sidebarWidth: 424,
+      sidebarCollapsed: true,
+    });
 
     const raw = stub.storage.get(USERSCRIPT_SETTINGS_KEY);
     assert.ok(raw, "settings must be stored under the single documented key");
     assert.deepEqual(JSON.parse(raw), {
+      enabled: true,
       notifications: true,
       takeover: false,
       theme: "slack",
+      sidebarWidth: 424,
+      sidebarCollapsed: true,
       channelId: "D0BNVUT538S",
     });
 
     // A fresh platform reads the same store, which is what a page reload does.
     assert.deepEqual(await createUserscriptPlatform().getSettings(), {
+      enabled: true,
       notifications: true,
       takeover: false,
       theme: "slack",
+      sidebarWidth: 424,
+      sidebarCollapsed: true,
       channelId: "D0BNVUT538S",
     });
 
@@ -258,11 +308,12 @@ test("settings listeners see the new value and stop after unsubscribe", async ()
 
 const paritySnapshots = [
   { name: "empty store", stored: {} },
-  { name: "fully populated", stored: { origin: "https://test.slack.com", channelId: "D1", userId: "U1", notifications: false, takeover: false, theme: "slack" } },
+  { name: "fully populated", stored: { origin: "https://test.slack.com", channelId: "D1", userId: "U1", enabled: false, notifications: false, takeover: false, theme: "light", sidebarWidth: 480, sidebarCollapsed: true } },
   { name: "empty strings read as absent", stored: { channelId: "", origin: "", userId: "" } },
   { name: "one corrupt key does not reset the rest", stored: { notifications: "yes", takeover: false, theme: "codex" } },
   { name: "unknown keys are ignored", stored: { theme: "codex", somethingElse: 42 } },
   { name: "an unknown theme falls back", stored: { theme: "neon", takeover: false } },
+  { name: "invalid sidebar preferences fall back", stored: { sidebarWidth: 1_000, sidebarCollapsed: "yes", theme: "light" } },
 ] as const;
 
 for (const snapshot of paritySnapshots) {

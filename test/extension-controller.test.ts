@@ -3,6 +3,10 @@ import test from "node:test";
 
 import { buildQuestionMetadata, buildSessionMetadata, buildTranscriptMetadata } from "../src/metadata.js";
 import type { SessionStatus } from "../src/protocol.js";
+import {
+  parseSessionLaunchRequest,
+  SESSION_LAUNCH_SUCCESS_PREFIX,
+} from "../src/session-launch.js";
 import { createSlackController, type ControllerDeps } from "../extension/src/app/controller.js";
 import type { Controller, SessionView } from "../extension/src/types.js";
 
@@ -151,6 +155,7 @@ function harness(): Harness {
       if (value instanceof Error) throw value;
       return value as T;
     },
+    uploadImages: async () => undefined,
     now: () => {
       clock += 1;
       return clock;
@@ -282,6 +287,70 @@ test("sendInstruction posts to the thread, echoes optimistically, then reconcile
   controller.stop();
 });
 
+test("createSession posts a launch request and waits for daemon success", async () => {
+  const h = harness();
+  h.respond(
+    HISTORY,
+    { ok: true, messages: [rootCard()] },
+    {
+      ok: true,
+      messages: [
+        rootCard(),
+        rootCard({ sessionId: "new-session", ts: "1770000200.000100", title: "ui-smoke" }),
+      ],
+    },
+  );
+  h.respond(POST, { ok: true, ts: "1770000199.000100" });
+  h.respond(REPLIES, {
+    ok: true,
+    messages: [
+      { ts: "1770000199.000100", text: "launch request" },
+      { ts: "1770000199.000200", bot_id: "B07SLACKOFF", text: `${SESSION_LAUNCH_SUCCESS_PREFIX}ui-smoke` },
+    ],
+  });
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+
+  const creating = controller.createSession({
+    name: "ui-smoke",
+    cwd: "~/src/slackoff",
+    prompt: "Check the UI",
+  });
+  await h.settle();
+  await h.fire(2_000);
+  await h.fire(2_000);
+  await creating;
+
+  const post = h.calls.find((entry) => entry.method === POST);
+  assert.ok(post);
+  assert.equal(post.params.thread_ts, undefined);
+  assert.deepEqual(parseSessionLaunchRequest(String(post.params.text)), {
+    name: "ui-smoke",
+    cwd: "~/src/slackoff",
+    prompt: "Check the UI",
+  });
+  assert.equal(controller.getState().sessions.some((session) => session.title === "ui-smoke"), true);
+  controller.stop();
+});
+
+test("stopping the controller cancels pending session launch polling", async () => {
+  const h = harness();
+  h.respond(HISTORY, { ok: true, messages: [rootCard()] });
+  h.respond(REPLIES, { ok: true, messages: [rootCard()] });
+  h.respond(POST, { ok: true, ts: "1770000199.000100" });
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+
+  const creating = controller.createSession({ name: "ui-smoke", cwd: "~/src/slackoff" });
+  await h.settle();
+  controller.stop();
+
+  await assert.rejects(creating, /Session creation cancelled/);
+  assert.deepEqual(h.pending(), []);
+});
+
 test("a rejected post marks the optimistic event failed and keeps it for retry", async () => {
   const h = harness();
   h.respond(HISTORY, { ok: true, messages: [rootCard()] });
@@ -397,7 +466,7 @@ test("answerQuestion refuses when nothing is waiting", async () => {
   controller.stop();
 });
 
-test("a closed session refuses input", async () => {
+test("closed sessions are omitted and refuse input as unknown", async () => {
   const h = harness();
   h.respond(HISTORY, {
     ok: true,
@@ -408,8 +477,9 @@ test("a closed session refuses input", async () => {
   controller.start();
   await h.settle();
 
-  await assert.rejects(controller.sendInstruction(SESSION_ID, "ship it"), /Old work.*thread is closed/);
-  await assert.rejects(controller.stopTurn(SESSION_ID), /thread is closed/);
+  assert.equal(controller.getState().sessions.length, 0);
+  await assert.rejects(controller.sendInstruction(SESSION_ID, "ship it"), /Unknown session/);
+  await assert.rejects(controller.stopTurn(SESSION_ID), /Unknown session/);
   assert.equal(h.calls.some((entry) => entry.method === POST), false);
   controller.stop();
 });

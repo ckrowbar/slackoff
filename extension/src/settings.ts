@@ -8,9 +8,12 @@ export const SETTINGS_KEYS = [
   "origin",
   "channelId",
   "userId",
+  "enabled",
   "notifications",
   "takeover",
   "theme",
+  "sidebarWidth",
+  "sidebarCollapsed",
 ] as const satisfies readonly (keyof StoredSettings)[];
 
 /**
@@ -22,9 +25,12 @@ const StoredSettingsSchema = z.object({
   origin: z.string().optional().catch(undefined),
   channelId: z.string().optional().catch(undefined),
   userId: z.string().optional().catch(undefined),
+  enabled: z.boolean().optional().catch(undefined),
   notifications: z.boolean().optional().catch(undefined),
   takeover: z.boolean().optional().catch(undefined),
-  theme: z.enum(["codex", "slack"]).optional().catch(undefined),
+  theme: z.enum(["codex", "slack", "light"]).optional().catch(undefined),
+  sidebarWidth: z.number().int().min(220).max(560).optional().catch(undefined),
+  sidebarCollapsed: z.boolean().optional().catch(undefined),
 });
 
 /**
@@ -41,9 +47,12 @@ export function parseSettings(raw: unknown): StoredSettings {
     ...(value.origin ? { origin: value.origin } : {}),
     ...(value.channelId ? { channelId: value.channelId } : {}),
     ...(value.userId ? { userId: value.userId } : {}),
+    ...(value.enabled !== undefined ? { enabled: value.enabled } : {}),
     ...(value.notifications !== undefined ? { notifications: value.notifications } : {}),
     ...(value.takeover !== undefined ? { takeover: value.takeover } : {}),
     ...(value.theme !== undefined ? { theme: value.theme } : {}),
+    ...(value.sidebarWidth !== undefined ? { sidebarWidth: value.sidebarWidth } : {}),
+    ...(value.sidebarCollapsed !== undefined ? { sidebarCollapsed: value.sidebarCollapsed } : {}),
   };
 }
 

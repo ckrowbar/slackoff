@@ -1,6 +1,12 @@
+import { MAX_IMAGE_INPUT_BYTES, SUPPORTED_IMAGE_MIME_TYPES } from "../../src/image-inputs.js";
 import { encodeSlackBody, interpretSlackReply } from "./platform.js";
 import { DEFAULT_SETTINGS } from "./types.js";
-import type { BackgroundRequest, BackgroundResponse, SlackCallRequest } from "./types.js";
+import type {
+  BackgroundRequest,
+  BackgroundResponse,
+  SlackCallRequest,
+  SlackUploadRequest,
+} from "./types.js";
 
 /**
  * Service worker. It owns the only network access in the extension, because a content script
@@ -45,6 +51,9 @@ async function handleRequest(request: BackgroundRequest): Promise<BackgroundResp
     case "slack.call":
       return await callSlack(request);
 
+    case "slack.upload":
+      return await uploadSlackBytes(request);
+
     case "notify":
       chrome.notifications.create(request.sessionId, {
         type: "basic",
@@ -88,6 +97,50 @@ async function callSlack(request: SlackCallRequest): Promise<BackgroundResponse>
     await response.text().catch(() => ""),
   );
   return reply.ok ? { ok: true, data: reply.payload } : { ok: false, ...reply.failure };
+}
+
+async function uploadSlackBytes(request: SlackUploadRequest): Promise<BackgroundResponse> {
+  let destination: URL;
+  try {
+    destination = new URL(request.url);
+  } catch {
+    return { ok: false, error: "invalid_upload_url" };
+  }
+  const hostname = destination.hostname.toLowerCase();
+  if (
+    destination.protocol !== "https:" ||
+    (hostname !== "slack.com" && !hostname.endsWith(".slack.com"))
+  ) {
+    return { ok: false, error: "invalid_upload_url" };
+  }
+  if (!SUPPORTED_IMAGE_MIME_TYPES.includes(request.contentType)) {
+    return { ok: false, error: "unsupported_image_type" };
+  }
+
+  let bytes: Uint8Array;
+  try {
+    const decoded = atob(request.body);
+    if (decoded.length > MAX_IMAGE_INPUT_BYTES) return { ok: false, error: "image_limit_exceeded" };
+    bytes = new Uint8Array(decoded.length);
+    for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index);
+  } catch {
+    return { ok: false, error: "invalid_upload_body" };
+  }
+
+  try {
+    const response = await fetch(destination, {
+      redirect: "error",
+      method: "POST",
+      credentials: "omit",
+      headers: { "Content-Type": request.contentType },
+      body: bytes,
+    });
+    return response.ok
+      ? { ok: true, data: undefined }
+      : { ok: false, error: "upload_failed", status: response.status };
+  } catch {
+    return { ok: false, error: "upload_failed" };
+  }
 }
 
 /** Brings a Slack tab forward and asks its console to select the session. */

@@ -9,6 +9,7 @@ import { createUserscriptPlatform } from "./platform/userscript.js";
 const platform = createUserscriptPlatform();
 const shell = new ConsoleShell(platform);
 
+platform.registerCommand("Toggle Slackoff script", () => void shell.toggleEnabled());
 platform.registerCommand("Toggle takeover", () => void shell.toggleTakeover());
 platform.registerCommand("Re-detect Slackoff DM", () => void shell.redetect());
 platform.registerCommand("Toggle notifications", () => void shell.toggleNotifications());

@@ -22,7 +22,7 @@ test("downloads authenticated Slack images and trusts detected content type", as
         name: "screenshot.png",
         mimetype: "image/jpeg",
         size: png.byteLength,
-        url_private_download: "https://files.slack.test/screenshot",
+        url_private_download: "https://files.slack.com/screenshot",
       },
     ],
     "xoxb-secret",
@@ -64,11 +64,35 @@ test("rejects unsupported and oversized Slack files before download", async () =
   );
 });
 
+test("rejects non-Slack download URLs without forwarding the bot token", async () => {
+  let fetchCalls = 0;
+  const fetchImpl = (async () => {
+    fetchCalls += 1;
+    return new Response(png);
+  }) as typeof fetch;
+
+  const result = await downloadSlackImages(
+    [{
+      id: "F123",
+      name: "stolen.png",
+      mimetype: "image/png",
+      size: png.byteLength,
+      url_private: "https://slack.com.attacker.invalid/collect",
+    }],
+    "xoxb-secret",
+    fetchImpl,
+  );
+
+  assert.equal(fetchCalls, 0);
+  assert.equal(result.images.length, 0);
+  assert.match(result.rejected[0]?.reason ?? "", /invalid download URL/);
+});
+
 test("rejects downloaded bytes that are not a supported image", async () => {
   const fetchImpl = (async () => new Response("not an image", { status: 200 })) as typeof fetch;
 
   const result = await downloadSlackImages(
-    [{ id: "F123", name: "fake.png", mimetype: "image/png", size: 12, url_private: "https://files.test/fake" }],
+    [{ id: "F123", name: "fake.png", mimetype: "image/png", size: 12, url_private: "https://files.slack.com/fake" }],
     "xoxb-secret",
     fetchImpl,
   );

@@ -1,10 +1,17 @@
 import { z } from "zod";
+import {
+  encodeSessionLaunchRequest,
+  SESSION_LAUNCH_FAILURE_PREFIX,
+  SESSION_LAUNCH_SUCCESS_PREFIX,
+} from "../../../src/session-launch.js";
+import type { SessionLaunchRequest } from "../../../src/session-launch.js";
 
 import { mergeSessions, needsAttention, parseSessionRoot, reduceThread } from "../slack/sessions.js";
 import type {
   AppState,
   ConnectionState,
   Controller,
+  ImageUpload,
   PendingQuestion,
   SessionView,
   StatusFilter,
@@ -19,6 +26,7 @@ import type {
  */
 export interface ControllerDeps {
   call<T>(method: string, params: Record<string, string | number | boolean>): Promise<T>;
+  uploadImages(threadTs: string, text: string, images: readonly ImageUpload[]): Promise<void>;
   channelId: string;
   /** Workspace name for the connection banner; blank when the caller has not resolved one. */
   team?: string;
@@ -53,9 +61,20 @@ const ConversationsResponseSchema = z.looseObject({
   has_more: z.boolean().optional(),
 });
 
+const LaunchPostResponseSchema = z.object({ ts: z.string().min(1) });
+const LaunchReplyResponseSchema = z.object({
+  messages: z.array(z.object({
+    text: z.string().default(""),
+    bot_id: z.string().optional(),
+  })).default([]),
+});
+const LAUNCH_RESULT_POLLS = 15;
+const LAUNCH_RESULT_POLL_MS = 2_000;
+
 type PollScope = "sessions" | "thread";
 
 class SlackController implements Controller {
+
   readonly #deps: ControllerDeps;
   readonly #listeners = new Set<(state: AppState) => void>();
   /** Every session we know about. AppState.sessions publishes the filtered view of this. */
@@ -81,6 +100,7 @@ class SlackController implements Controller {
   #echoSeq = 0;
   /** Sessions already announced, keyed by session and question, so notices never repeat. */
   #notified = new Set<string>();
+  #launchWaiters = new Map<number, (reason?: unknown) => void>();
 
   constructor(deps: ControllerDeps) {
     this.#deps = deps;
@@ -120,6 +140,11 @@ class SlackController implements Controller {
     this.#generation += 1;
     if (this.#sessionTimer !== undefined) this.#deps.clearTimer(this.#sessionTimer);
     if (this.#threadTimer !== undefined) this.#deps.clearTimer(this.#threadTimer);
+    for (const [timer, reject] of this.#launchWaiters) {
+      this.#deps.clearTimer(timer);
+      reject(new Error("Session creation cancelled"));
+    }
+    this.#launchWaiters.clear();
     this.#sessionTimer = undefined;
     this.#threadTimer = undefined;
   }
@@ -171,6 +196,74 @@ class SlackController implements Controller {
     await this.#postEcho(session, body);
   }
 
+  async sendImages(sessionId: string, text: string, images: readonly ImageUpload[]): Promise<void> {
+    const session = this.#requireControllable(sessionId);
+    if (images.length === 0) throw new Error("Attach at least one image");
+    this.#inflight += 1;
+    this.#publish();
+    try {
+      await this.#deps.uploadImages(session.threadTs, text, images);
+      this.#notice = undefined;
+      await this.#pollThread(true);
+    } catch (error) {
+      this.#notice = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      this.#inflight -= 1;
+      this.#publish();
+    }
+  }
+
+  async createSession(request: SessionLaunchRequest): Promise<void> {
+    if (!this.#running) throw new Error("Controller is stopped");
+    const generation = this.#generation;
+    this.#inflight += 1;
+    this.#publish();
+    try {
+      const raw = await this.#deps.call<unknown>("chat.postMessage", {
+        channel: this.#deps.channelId,
+        text: encodeSessionLaunchRequest(request),
+      });
+      if (generation !== this.#generation) throw new Error("Session creation cancelled");
+      const posted = LaunchPostResponseSchema.safeParse(raw);
+      if (!posted.success) throw new Error("Unexpected launch request response");
+
+      for (let attempt = 0; attempt < LAUNCH_RESULT_POLLS; attempt += 1) {
+        await this.#delay(LAUNCH_RESULT_POLL_MS);
+        if (generation !== this.#generation) throw new Error("Session creation cancelled");
+        const rawReplies = await this.#deps.call<unknown>("conversations.replies", {
+          channel: this.#deps.channelId,
+          ts: posted.data.ts,
+          limit: 20,
+        });
+        if (generation !== this.#generation) throw new Error("Session creation cancelled");
+        const replies = LaunchReplyResponseSchema.safeParse(rawReplies);
+        if (!replies.success) throw new Error("Unexpected launch result response");
+        const response = replies.data.messages.find((message) =>
+          message.bot_id &&
+          (
+            message.text.startsWith(SESSION_LAUNCH_SUCCESS_PREFIX) ||
+            message.text.startsWith(SESSION_LAUNCH_FAILURE_PREFIX)
+          )
+        );
+        if (!response) continue;
+        if (response.text.startsWith(SESSION_LAUNCH_FAILURE_PREFIX)) {
+          throw new Error(response.text.slice(SESSION_LAUNCH_FAILURE_PREFIX.length));
+        }
+        this.#notice = undefined;
+        await this.#pollSessions(true);
+        return;
+      }
+      throw new Error("Timed out waiting for Slackoff to launch the session");
+    } catch (error) {
+      this.#notice = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      this.#inflight -= 1;
+      this.#publish();
+    }
+  }
+
   async answerQuestion(sessionId: string, answers: readonly string[]): Promise<void> {
     const session = this.#requireControllable(sessionId);
     const question: PendingQuestion | undefined = session.pendingQuestion;
@@ -217,10 +310,16 @@ class SlackController implements Controller {
         const session = parseSessionRoot(message, this.#deps.channelId);
         if (session) fresh.push(session);
       }
-      this.#sessions = mergeSessions(this.#sessions, fresh, {
+      const merged = mergeSessions(this.#sessions, fresh, {
         now: () => this.#deps.now(),
         selectedSessionId: this.#selected,
       });
+      this.#sessions = merged.filter((session) => !session.collapsed);
+      if (this.#selected && !this.#sessions.some((session) => session.sessionId === this.#selected)) {
+        this.#selected = undefined;
+        this.#thread = undefined;
+        this.#local = [];
+      }
       this.#sessionDelay = SESSION_POLL_MS;
       this.#connection = { phase: "ready", team: this.#deps.team ?? "", lastSyncAt: this.#deps.now() };
       this.#notice = undefined;
@@ -255,7 +354,7 @@ class SlackController implements Controller {
       if (generation !== this.#generation || this.#selected !== sessionId) return;
       const parsed = ConversationsResponseSchema.safeParse(response);
       if (!parsed.success) throw new Error("Unexpected conversations.replies response");
-      const { events, pendingQuestion } = reduceThread(parsed.data.messages);
+      const { events, pendingQuestion } = reduceThread(parsed.data.messages, session.threadTs);
       this.#local = this.#local.filter(
         (echo) =>
           echo.failed !== undefined ||
@@ -303,6 +402,16 @@ class SlackController implements Controller {
     else this.#threadTimer = handle;
   }
 
+  #delay(ms: number): Promise<void> {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const handle = this.#deps.setTimer(() => {
+      this.#launchWaiters.delete(handle);
+      resolve();
+    }, ms);
+    this.#launchWaiters.set(handle, reject);
+    return promise;
+  }
+
   #fail(scope: PollScope, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     const detail = error as { retryAfterMs?: unknown };
@@ -312,7 +421,7 @@ class SlackController implements Controller {
     this.#connection = { phase: "error", message, recoverable: !fatal };
     this.#notice = retryAfterMs
       ? `Slack rate limit; retrying in ${Math.ceil(retryAfterMs / 1000)}s.`
-      : undefined;
+      : `Could not sync ${scope === "thread" ? "the transcript" : "sessions"}: ${message}`;
     this.#publish();
 
     const base = scope === "sessions" ? SESSION_POLL_MS : THREAD_POLL_MS;
