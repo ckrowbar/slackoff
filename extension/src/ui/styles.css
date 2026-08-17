@@ -269,6 +269,10 @@
   transition: grid-template-columns 160ms ease;
 }
 
+.slackoff-console .rail { grid-column: 1; }
+.slackoff-console .sidebar-resizer { grid-column: 2; }
+.slackoff-console .main-pane { grid-column: 3; }
+
 .slackoff-console.is-sidebar-collapsed .console-body {
   grid-template-columns: 0 0 minmax(0, 1fr);
 }
