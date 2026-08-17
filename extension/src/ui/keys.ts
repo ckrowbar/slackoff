@@ -21,6 +21,9 @@ export function installKeys(root: HTMLElement, actions: KeyActions): () => void 
 
   const onKeyDown = (event: Event): void => {
     if (!(event instanceof KeyboardEvent)) return;
+    // Slack's page-level shortcuts see shadow-DOM events retargeted to the host and can cancel
+    // normal text entry. Keep every console keystroke inside the console boundary.
+    event.stopPropagation();
     if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
       event.preventDefault();
       actions.togglePalette();
