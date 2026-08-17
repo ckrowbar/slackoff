@@ -285,6 +285,13 @@ class SlackController implements Controller {
 
   async closeThread(sessionId: string): Promise<void> {
     await this.#postCommand(sessionId, "!close");
+    this.#sessions = this.#sessions.filter((session) => session.sessionId !== sessionId);
+    if (this.#selected === sessionId) {
+      this.#selected = undefined;
+      this.#thread = undefined;
+      this.#local = [];
+    }
+    this.#publish();
   }
 
   /* ---------- polling ---------- */
@@ -499,6 +506,7 @@ class SlackController implements Controller {
       this.#notice = undefined;
     } catch (error) {
       this.#notice = error instanceof Error ? error.message : String(error);
+      throw error;
     } finally {
       this.#inflight -= 1;
       this.#publish();

@@ -405,6 +405,41 @@ for (const row of commandCases) {
   });
 }
 
+test("closeThread removes the accepted thread immediately", async () => {
+  const h = harness();
+  h.respond(HISTORY, { ok: true, messages: [rootCard()] });
+  h.respond(REPLIES, { ok: true, messages: [rootCard()] });
+  h.respond(POST, { ok: true, ts: "1770000103.000500" });
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+  controller.select(SESSION_ID);
+  await h.settle();
+
+  await controller.closeThread(SESSION_ID);
+
+  assert.equal(controller.getState().sessions.length, 0);
+  assert.equal(controller.getState().selectedSessionId, undefined);
+  assert.equal(controller.getState().thread, undefined);
+  controller.stop();
+});
+
+test("closeThread keeps the thread when Slack rejects the command", async () => {
+  const h = harness();
+  h.respond(HISTORY, { ok: true, messages: [rootCard()] });
+  h.respond(REPLIES, { ok: true, messages: [rootCard()] });
+  h.respond(POST, new Error("ratelimited"));
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+
+  await assert.rejects(controller.closeThread(SESSION_ID), /ratelimited/);
+
+  assert.equal(controller.getState().sessions.length, 1);
+  assert.equal(controller.getState().notice, "ratelimited");
+  controller.stop();
+});
+
 test("setModel refuses a selector that is not provider/id", async () => {
   const h = harness();
   h.respond(HISTORY, { ok: true, messages: [rootCard()] });

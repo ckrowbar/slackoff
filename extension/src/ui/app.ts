@@ -205,7 +205,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     if (!session) return;
     const confirmed = await confirmDialog.ask({
       title: `Close “${session.title}”?`,
-      detail: "The Slack thread stays visible but stops accepting input.",
+      detail: "This closes the Slackoff thread and removes it from the session list. Slack keeps its message history.",
       confirmLabel: "Close thread",
       danger: true,
     });
