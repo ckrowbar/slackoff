@@ -47,6 +47,9 @@ Sessions are grouped by what they need from you: **Needs you**, **Working**, **R
 **Done**. Closed threads are hidden. Each row shows status, project, model, relative time, and unread
 count.
 
+While the console is visible, it advances the Slackoff DM read cursor to the newest message after a
+short delay. This clears the same unread state in Slack's other open clients.
+
 The session sidebar can be collapsed or resized by dragging its divider. Focus the divider and use
 the arrow keys to resize it in 16-pixel steps. The console remembers both settings.
 

@@ -202,6 +202,7 @@ function harness(): Harness {
 const HISTORY = "conversations.history";
 const REPLIES = "conversations.replies";
 const POST = "chat.postMessage";
+const MARK = "conversations.mark";
 
 test("initial poll populates sessions and reports a ready connection", async () => {
   const h = harness();
@@ -223,6 +224,32 @@ test("initial poll populates sessions and reports a ready connection", async () 
   assert.equal(state.sessions[0]?.activity, "Thinking");
   controller.stop();
   assert.deepEqual(h.pending(), []);
+});
+
+test("visible console advances Slack's read cursor to the newest thread reply", async () => {
+  const h = harness();
+  h.respond(HISTORY, {
+    ok: true,
+    messages: [
+      rootCard({ latestReply: "1770000300.000500" }),
+      { ts: "1770000250.000400", text: "ordinary DM message" },
+    ],
+  });
+  h.respond(REPLIES, { ok: true, messages: [] });
+  h.respond(MARK, { ok: true });
+  const controller = createSlackController(h.deps);
+
+  controller.start();
+  await h.settle();
+  assert.equal(h.calls.some((entry) => entry.method === MARK), false);
+
+  await h.fire(3_000);
+
+  assert.deepEqual(h.calls.find((entry) => entry.method === MARK)?.params, {
+    channel: CHANNEL,
+    ts: "1770000300.000500",
+  });
+  controller.stop();
 });
 
 test("selecting a session loads its thread", async () => {

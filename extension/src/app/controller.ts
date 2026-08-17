@@ -45,6 +45,7 @@ const THREAD_PAGE = 200;
 const MAX_THREAD_LIMIT = 1_000;
 /** deps has no visibilitychange hook, so a hidden tick re-checks soon and polls the moment it can. */
 const HIDDEN_PROBE_MS = 1_000;
+const READ_MARK_DELAY_MS = 3_000;
 
 /** Slack failures that no amount of retrying fixes; the user has to re-authenticate. */
 const FATAL_CODES: Record<string, true> = {
@@ -67,6 +68,10 @@ const LaunchReplyResponseSchema = z.object({
     text: z.string().default(""),
     bot_id: z.string().optional(),
   })).default([]),
+});
+const ReadCursorMessageSchema = z.looseObject({
+  ts: z.string().regex(/^\d+\.\d+$/),
+  latest_reply: z.string().regex(/^\d+\.\d+$/).optional(),
 });
 const LAUNCH_RESULT_POLLS = 15;
 const LAUNCH_RESULT_POLL_MS = 2_000;
@@ -101,6 +106,9 @@ class SlackController implements Controller {
   /** Sessions already announced, keyed by session and question, so notices never repeat. */
   #notified = new Set<string>();
   #launchWaiters = new Map<number, (reason?: unknown) => void>();
+  #readMarkTimer: number | undefined;
+  #pendingReadTs: string | undefined;
+  #lastReadAttemptTs: string | undefined;
 
   constructor(deps: ControllerDeps) {
     this.#deps = deps;
@@ -140,6 +148,7 @@ class SlackController implements Controller {
     this.#generation += 1;
     if (this.#sessionTimer !== undefined) this.#deps.clearTimer(this.#sessionTimer);
     if (this.#threadTimer !== undefined) this.#deps.clearTimer(this.#threadTimer);
+    if (this.#readMarkTimer !== undefined) this.#deps.clearTimer(this.#readMarkTimer);
     for (const [timer, reject] of this.#launchWaiters) {
       this.#deps.clearTimer(timer);
       reject(new Error("Session creation cancelled"));
@@ -147,6 +156,8 @@ class SlackController implements Controller {
     this.#launchWaiters.clear();
     this.#sessionTimer = undefined;
     this.#threadTimer = undefined;
+    this.#readMarkTimer = undefined;
+    this.#pendingReadTs = undefined;
   }
 
   select(sessionId: string | undefined): void {
@@ -312,6 +323,8 @@ class SlackController implements Controller {
       if (generation !== this.#generation) return;
       const parsed = ConversationsResponseSchema.safeParse(response);
       if (!parsed.success) throw new Error("Unexpected conversations.history response");
+      const newestReadTs = latestMessageTimestamp(parsed.data.messages);
+      if (newestReadTs && this.#deps.isVisible()) this.#scheduleReadMark(newestReadTs);
       const fresh: SessionView[] = [];
       for (const message of parsed.data.messages) {
         const session = parseSessionRoot(message, this.#deps.channelId);
@@ -407,6 +420,32 @@ class SlackController implements Controller {
     }, delay);
     if (scope === "sessions") this.#sessionTimer = handle;
     else this.#threadTimer = handle;
+  }
+
+  #scheduleReadMark(ts: string): void {
+    if (this.#lastReadAttemptTs && compareSlackTimestamps(ts, this.#lastReadAttemptTs) <= 0) return;
+    if (this.#pendingReadTs && compareSlackTimestamps(ts, this.#pendingReadTs) <= 0) return;
+    this.#pendingReadTs = ts;
+    if (this.#readMarkTimer !== undefined) return;
+
+    this.#readMarkTimer = this.#deps.setTimer(() => {
+      this.#readMarkTimer = undefined;
+      const pending = this.#pendingReadTs;
+      this.#pendingReadTs = undefined;
+      if (!this.#running || !pending) return;
+
+      const generation = this.#generation;
+      this.#lastReadAttemptTs = pending;
+      void this.#deps.call("conversations.mark", {
+        channel: this.#deps.channelId,
+        ts: pending,
+      }).catch((error: unknown) => {
+        if (generation !== this.#generation) return;
+        const message = error instanceof Error ? error.message : String(error);
+        this.#notice = `Could not mark Slackoff as read: ${message}`;
+        this.#publish();
+      });
+    }, READ_MARK_DELAY_MS);
   }
 
   #delay(ms: number): Promise<void> {
@@ -565,4 +604,24 @@ class SlackController implements Controller {
 
 export function createSlackController(deps: ControllerDeps): Controller {
   return new SlackController(deps);
+}
+
+function latestMessageTimestamp(messages: readonly unknown[]): string | undefined {
+  let latest: string | undefined;
+  for (const message of messages) {
+    const parsed = ReadCursorMessageSchema.safeParse(message);
+    if (!parsed.success) continue;
+    const candidate = parsed.data.latest_reply ?? parsed.data.ts;
+    if (!latest || compareSlackTimestamps(candidate, latest) > 0) latest = candidate;
+  }
+  return latest;
+}
+
+function compareSlackTimestamps(left: string, right: string): number {
+  const [leftSeconds = "", leftFraction = ""] = left.split(".");
+  const [rightSeconds = "", rightFraction = ""] = right.split(".");
+  if (leftSeconds.length !== rightSeconds.length) return leftSeconds.length - rightSeconds.length;
+  const seconds = leftSeconds.localeCompare(rightSeconds);
+  if (seconds !== 0) return seconds;
+  return leftFraction.padEnd(6, "0").localeCompare(rightFraction.padEnd(6, "0"));
 }
