@@ -1,3 +1,4 @@
+import type { ModelEffort } from "../../../src/protocol.js";
 import type { AppState, Controller, ModelOption, PendingQuestion, SessionView, StatusFilter, ThreadEvent, ThreadState } from "../types.js";
 
 const MODEL_DATA: readonly (readonly [string, string, string])[] = [
@@ -34,6 +35,7 @@ const MODEL_DATA: readonly (readonly [string, string, string])[] = [
   ["amazon", "nova-premier", "Nova Premier"],
   ["local", "qwen3-coder-30b", "Qwen3 Coder 30B"],
 ];
+const EFFORTS: ModelEffort[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 const MODELS: ModelOption[] = MODEL_DATA.map(([provider, id, name]) => ({ provider, id, name, selector: `${provider}/${id}` }));
 const NOW = Date.now();
@@ -77,9 +79,10 @@ function session(
     title,
     project,
     status,
-    activity: "",
     model: MODELS[modelIndex] ?? MODELS[0]!,
+    effort: "high",
     models: MODELS,
+    efforts: EFFORTS,
     collapsed: false,
     startedAt: NOW - (90 + updatedMinutes) * minute,
     updatedAt: NOW - updatedMinutes * minute,
@@ -326,6 +329,12 @@ export function createFixtureController(): Controller {
       if (!model) throw new Error(`Unknown model: ${selector}`);
       updateSession(sessionId, (item) => ({ ...item, model, updatedAt: Date.now() }));
       notice = `Model switched to ${model.name}.`;
+      emit();
+    },
+    async setEffort(sessionId, effort) {
+      if (!EFFORTS.includes(effort)) throw new Error(`Unknown effort: ${effort}`);
+      updateSession(sessionId, (item) => ({ ...item, effort, updatedAt: Date.now() }));
+      notice = `Model effort set to ${effort}.`;
       emit();
     },
     async closeThread(sessionId) {

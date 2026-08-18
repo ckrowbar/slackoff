@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import type { ModelDescriptor, SessionStatus } from "./protocol.js";
+import { ModelEffortSchema } from "./protocol.js";
+import type { ModelDescriptor, ModelEffort, SessionStatus } from "./protocol.js";
 
 /**
  * Structured Slack message metadata attached to every message the daemon posts.
@@ -55,6 +56,10 @@ export const SessionMetadataPayloadSchema = z.object({
   collapsed: z.boolean(),
   /** Current model selector, "provider/id", or "" when unknown. */
   model: z.string().default(""),
+  /** Current model effort, when the selected model exposes a controllable effort surface. */
+  effort: ModelEffortSchema.optional(),
+  /** JSON array of model efforts accepted by the selected model. */
+  efforts: JsonArrayString(z.array(ModelEffortSchema)).optional(),
   /** JSON array of ModelDescriptor. */
   models: JsonArrayString(z.array(ModelDescriptorPayloadSchema)),
 });
@@ -99,6 +104,8 @@ export interface SessionMetadataInput {
   collapsed: boolean;
   model?: ModelDescriptor | undefined;
   models: readonly ModelDescriptor[];
+  efforts?: readonly ModelEffort[] | undefined;
+  effort?: ModelEffort | undefined;
 }
 
 export function buildSessionMetadata(input: SessionMetadataInput): MessageMetadata {
@@ -114,9 +121,11 @@ export function buildSessionMetadata(input: SessionMetadataInput): MessageMetada
       activity: input.activity ?? "",
       collapsed: input.collapsed,
       model: input.model ? `${input.model.provider}/${input.model.id}` : "",
+      ...(input.effort ? { effort: input.effort } : {}),
       models: JSON.stringify(
         input.models.map((model) => ({ provider: model.provider, id: model.id, name: model.name })),
       ),
+      ...(input.efforts !== undefined ? { efforts: JSON.stringify(input.efforts) } : {}),
     },
   };
 }

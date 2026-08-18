@@ -114,6 +114,8 @@ const metadataRoot = {
     collapsed: false,
     model: SOL,
     models: [SOL, OPUS],
+    effort: "high",
+    efforts: ["off", "low", "medium", "high"],
   }),
 };
 
@@ -260,6 +262,8 @@ const rootCases: RootCase[] = [
         { ...SOL, selector: "openai-codex/gpt-5.6-sol" },
         { ...OPUS, selector: "anthropic/claude-opus-4-6" },
       ],
+      effort: "high",
+      efforts: ["off", "low", "medium", "high"],
       collapsed: false,
       startedAt: tsToMillis(ROOT_TS),
       updatedAt: tsToMillis(LATEST_REPLY),
@@ -672,6 +676,7 @@ function session(overrides: Partial<SessionView> & Pick<SessionView, "sessionId"
     status: "idle",
     activity: "",
     models: [],
+    efforts: [],
     collapsed: false,
     startedAt: 1_000,
     updatedAt: 1_000,

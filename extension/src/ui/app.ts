@@ -1,4 +1,4 @@
-import type { AppState, Controller, MountApp, SessionView, StatusFilter, Theme } from "../types.js";
+import type { AppState, Controller, ModelEffort, MountApp, SessionView, StatusFilter, Theme } from "../types.js";
 import { Composer } from "./composer.js";
 import { ConfirmDialog } from "./confirm.js";
 import { element, modelLabel, statusLabel } from "./dom.js";
@@ -8,6 +8,19 @@ import { filterSessions, SessionList } from "./session-list.js";
 import { SessionCreator } from "./session-create.js";
 import { SidebarLayout } from "./sidebar.js";
 import { TranscriptView } from "./transcript.js";
+const EFFORT_LABELS: Record<ModelEffort, string> = {
+  off: "Off",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "X-high",
+  max: "Max",
+};
+
+function isModelEffort(value: string): value is ModelEffort {
+  return Object.hasOwn(EFFORT_LABELS, value);
+}
 
 export const mountApp: MountApp = (root, controller, preferences): (() => void) => {
   const hadRootClass = root.classList.contains("slackoff-console");
@@ -23,6 +36,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   let selectionRequested = false;
   let lastNotice: string | undefined;
   let modelSignature = "";
+  let effortSignature = "";
   const timers = new Set<number>();
   const paletteSessions = new Map<string, SessionView>();
 
@@ -81,9 +95,18 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     }
   };
   modelLabelNode.append(modelSelect);
+  const effortLabelNode = element("label", "effort-picker");
+  effortLabelNode.append(element("span", "picker-label", { text: "Effort" }));
+  const effortSelect = element("select", "effort-picker__select", { ariaLabel: "Set model effort", title: "Set model effort" });
+  effortSelect.onchange = () => {
+    const selected = state.sessions.find((session) => session.sessionId === state.selectedSessionId);
+    if (!selected || !isModelEffort(effortSelect.value) || effortSelect.value === selected.effort) return;
+    void controller.setEffort(selected.sessionId, effortSelect.value).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
+  };
+  effortLabelNode.append(effortSelect);
   const stopButton = element("button", "secondary-button stop-button", { type: "button", text: "Stop" });
   const closeButton = element("button", "text-button close-button", { type: "button", text: "Close thread" });
-  headerActions.append(modelLabelNode, stopButton, closeButton);
+  headerActions.append(modelLabelNode, effortLabelNode, stopButton, closeButton);
   sessionHeader.append(headingCopy, headerActions);
 
   const toastArea = element("div", "toast-area", { ariaLabel: "Notifications", "aria-live": "polite" });
@@ -302,13 +325,30 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
         modelSelect.replaceChildren(...options);
         modelSignature = nextModelSignature;
       }
+      const nextEffortSignature = `${selected.sessionId}|${selected.efforts.join("|")}`;
+      if (nextEffortSignature !== effortSignature) {
+        const options = [
+          element("option", "", {
+            value: "",
+            text: selected.efforts.length === 0 ? "Effort unavailable" : "Model default",
+            disabled: true,
+          }),
+          ...selected.efforts.map((effort) => element("option", "", { value: effort, text: EFFORT_LABELS[effort] })),
+        ];
+        effortSelect.replaceChildren(...options);
+        effortSignature = nextEffortSignature;
+      }
       modelSelect.value = selected.model?.selector ?? "";
       modelSelect.disabled = !selected.controllable || selected.models.length === 0;
       modelSelect.title = `${modelLabel(selected.model)} · Use Command-K to search ${selected.models.length} models`;
+      effortSelect.value = selected.effort ?? "";
+      effortSelect.disabled = !selected.controllable || selected.efforts.length === 0;
+      effortSelect.title = selected.efforts.length > 0 ? "Set the model's reasoning effort" : "This model has no selectable effort levels";
       stopButton.disabled = selected.status !== "working" && selected.status !== "waiting";
       closeButton.disabled = selected.collapsed;
     } else {
       modelSignature = "";
+      effortSignature = "";
     }
     transcript.update(selected, state.thread, selectionRequested);
     composer.update(selected);

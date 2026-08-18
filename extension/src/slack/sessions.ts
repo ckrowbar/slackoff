@@ -3,6 +3,7 @@ import { z } from "zod";
 import { parseMessageMetadata, type QuestionMetadataState } from "../../../src/metadata.js";
 import { SessionStatusSchema, type SessionStatus } from "../../../src/protocol.js";
 import type {
+  ModelEffort,
   ModelOption,
   PendingQuestion,
   QuestionOption,
@@ -242,7 +243,9 @@ interface CardBlocks {
   shortSessionId: string;
   bindingId: string;
   models: ModelOption[];
+  efforts: ModelEffort[];
   model?: ModelOption;
+  effort?: ModelEffort;
 }
 
 type RawBlock = z.infer<typeof BlockSchema>;
@@ -263,6 +266,7 @@ function readCollapsedCard(blocks: readonly RawBlock[]): CardBlocks | undefined 
     shortSessionId: "",
     bindingId: "",
     models: [],
+    efforts: [],
   };
 }
 
@@ -311,6 +315,7 @@ function readCardBlocks(blocks: readonly RawBlock[]): CardBlocks | undefined {
     shortSessionId,
     bindingId: actions?.block_id ?? "",
     models,
+    efforts: [],
     ...(initial ?? fromField ? { model: (initial ?? fromField) as ModelOption } : {}),
   };
 }
@@ -348,6 +353,7 @@ export function parseSessionRoot(message: unknown, channelId: string): SessionVi
   const models: ModelOption[] = payload
     ? payload.models.map((model) => ({ ...model, selector: `${model.provider}/${model.id}` }))
     : (card?.models ?? []);
+  const efforts = payload?.efforts ?? card?.efforts ?? [];
   const selected = payload?.model
     ? (models.find((model) => model.selector === payload.model) ?? modelFromSelector(payload.model))
     : card?.model;
@@ -366,7 +372,9 @@ export function parseSessionRoot(message: unknown, channelId: string): SessionVi
     status,
     activity,
     ...(selected ? { model: selected } : {}),
+    ...(payload?.effort ? { effort: payload.effort } : {}),
     models,
+    efforts,
     collapsed,
     startedAt: tsToMillis(raw.ts),
     updatedAt: tsToMillis(raw.latest_reply ?? raw.ts),
@@ -536,8 +544,8 @@ export function mergeSessions(
       advanced ||
       session.status !== prior.status ||
       session.activity !== prior.activity ||
-      session.collapsed !== prior.collapsed ||
-      session.model?.selector !== prior.model?.selector;
+      session.model?.selector !== prior.model?.selector ||
+      session.effort !== prior.effort;
     const pendingQuestion = session.pendingQuestion ?? prior.pendingQuestion;
     return {
       ...session,

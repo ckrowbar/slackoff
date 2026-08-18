@@ -8,6 +8,7 @@ import {
   buildTmuxArguments,
   normalizeLaunchRequest,
   parseOmpTmuxSessions,
+  TmuxAttachmentTracker,
   TmuxLauncher,
   type CommandRunner,
 } from "../src/daemon/launcher.js";
@@ -75,4 +76,30 @@ test("attaches and deletes only revalidated OMP tmux targets", async () => {
   assert.deepEqual(calls[1], ["send-keys", "-t", "%2", "-l", "/slackoff on"]);
   assert.deepEqual(calls[2], ["send-keys", "-t", "%2", "Enter"]);
   assert.deepEqual(calls[4], ["kill-session", "-t", "=alpha"]);
+});
+
+test("tmux attachment resolves only after the matching OMP registration completes", async () => {
+  const tracker = new TmuxAttachmentTracker(1_000);
+  const first = tracker.begin("alpha");
+  const second = tracker.begin("zeta");
+
+  assert.equal(tracker.claim("session-zeta", "zeta"), "zeta");
+  tracker.complete("session-zeta");
+  await second.promise;
+
+  let firstSettled = false;
+  void first.promise.finally(() => {
+    firstSettled = true;
+  });
+  await Promise.resolve();
+  assert.equal(firstSettled, false);
+
+  tracker.claim("session-alpha", "alpha");
+  tracker.complete("session-alpha");
+  await first.promise;
+});
+
+test("tmux attachment rejects when OMP never registers", async () => {
+  const tracker = new TmuxAttachmentTracker(5);
+  await assert.rejects(tracker.begin("broken").promise, /did not connect to Slackoff/);
 });

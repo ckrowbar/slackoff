@@ -115,6 +115,7 @@ export class SlackoffDaemon {
             await this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, "idle");
           }
           this.#respond(socket, { type: "response", requestId: message.requestId, ok: true, binding });
+          this.#slack.completeTmuxAttachment(session.id);
           await this.#slack.refreshRoot(record);
           this.#slack.scheduleHomeRefresh();
         } catch (error) {

@@ -1,3 +1,5 @@
+import type { ModelEffort } from "../protocol.js";
+
 /**
  * Thread control commands.
  *
@@ -10,9 +12,11 @@ export type ThreadCommand =
   | { kind: "stop" }
   | { kind: "close" }
   | { kind: "model"; selector: string }
+  | { kind: "effort"; effort: ModelEffort }
   | { kind: "omp"; command: string };
 
 const MODEL_SELECTOR = /^[A-Za-z0-9][\w.-]*\/[\w.:-]+$/;
+const MODEL_EFFORTS = new Set<ModelEffort>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 export function parseThreadCommand(text: string): ThreadCommand | undefined {
   const line = text.trim();
@@ -28,6 +32,11 @@ export function parseThreadCommand(text: string): ThreadCommand | undefined {
       const selector = args.length === 1 ? args[0] : undefined;
       if (!selector || !MODEL_SELECTOR.test(selector)) return undefined;
       return { kind: "model", selector };
+    }
+    case "effort": {
+      const effort = args.length === 1 ? args[0]?.toLowerCase() : undefined;
+      if (!effort || !MODEL_EFFORTS.has(effort as ModelEffort)) return undefined;
+      return { kind: "effort", effort: effort as ModelEffort };
     }
     case "omp": {
       const commandName = args[0];

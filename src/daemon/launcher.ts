@@ -26,6 +26,76 @@ export interface CommandResult {
 }
 
 export type CommandRunner = (program: string, args: string[]) => Promise<CommandResult>;
+export interface PendingTmuxAttachment {
+  promise: Promise<void>;
+  cancel(): void;
+}
+
+interface TmuxAttachmentWaiter {
+  name: string;
+  sessionId?: string;
+  resolve(): void;
+  reject(error: Error): void;
+  timer: NodeJS.Timeout;
+}
+
+/**
+ * Couples a tmux launch/attach request to the OMP registration that creates its Slack card.
+ * A successful `tmux new-session` is not sufficient: the child can exit before loading Slackoff.
+ */
+export class TmuxAttachmentTracker {
+  readonly #waiters: TmuxAttachmentWaiter[] = [];
+  readonly #timeoutMs: number;
+
+  constructor(timeoutMs = 30_000) {
+    this.#timeoutMs = timeoutMs;
+  }
+
+  begin(name: string): PendingTmuxAttachment {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const waiter: TmuxAttachmentWaiter = {
+      name,
+      resolve,
+      reject,
+      timer: setTimeout(() => {
+        this.#remove(waiter);
+        reject(new Error(`OMP session "${name}" did not connect to Slackoff`));
+      }, this.#timeoutMs),
+    };
+    waiter.timer.unref();
+    this.#waiters.push(waiter);
+    return {
+      promise,
+      cancel: () => {
+        if (!this.#remove(waiter)) return;
+        resolve();
+      },
+    };
+  }
+
+  claim(sessionId: string, tmuxSessionName?: string): string | undefined {
+    const waiter = this.#waiters.find(
+      (candidate) => candidate.sessionId === undefined && (!tmuxSessionName || candidate.name === tmuxSessionName),
+    );
+    if (!waiter) return undefined;
+    waiter.sessionId = sessionId;
+    return waiter.name;
+  }
+
+  complete(sessionId: string): void {
+    const waiter = this.#waiters.find((candidate) => candidate.sessionId === sessionId);
+    if (!waiter || !this.#remove(waiter)) return;
+    waiter.resolve();
+  }
+
+  #remove(waiter: TmuxAttachmentWaiter): boolean {
+    const index = this.#waiters.indexOf(waiter);
+    if (index < 0) return false;
+    this.#waiters.splice(index, 1);
+    clearTimeout(waiter.timer);
+    return true;
+  }
+}
 
 export class TmuxLauncher {
   readonly #ompPath: string;

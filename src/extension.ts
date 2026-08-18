@@ -2,15 +2,19 @@ import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { ExtensionAPI, ExtensionContext, MessageEndEvent } from "@oh-my-pi/pi-coding-agent";
+import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { z } from "zod";
 
 import { BridgeClient } from "./client.js";
 import { loadClientConfig } from "./config.js";
 import {
+  ModelEffortSchema,
   PROTOCOL_VERSION,
   SlackBindingSchema,
   type ModelDescriptor,
+  type ModelEffort,
   type ServerMessage,
+  type SessionEffortState,
   type SessionModelState,
   type SessionStatus,
 } from "./protocol.js";
@@ -115,7 +119,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     options: { commandId?: string; error?: string; force?: boolean } = {},
   ): void => {
     if (!currentState.enabled || !registeredSessionId) return;
-    const modelState = getSessionModelState(ctx);
+    const modelState = getSessionModelState(pi, ctx);
     const signature = JSON.stringify(modelState);
     if (!options.force && signature === lastModelStateSignature) return;
     lastModelStateSignature = signature;
@@ -190,7 +194,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       const bridge = getClient();
       await bridge.ensureConnected();
       const sessionId = ctx.sessionManager.getSessionId();
-      const modelState = getSessionModelState(ctx);
+      const modelState = getSessionModelState(pi, ctx);
       const title = getSessionTitle(sessionId);
       const projectIdentity = await resolveProjectIdentity(ctx);
       const response = await bridge.request({
@@ -293,6 +297,25 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
         sendModelState(ctx, { commandId: message.commandId, error: detail, force: true });
         reportError(error instanceof Error ? error : new Error(detail));
       });
+      return;
+    }
+    if (message.type === "set_effort") {
+      try {
+        let error: string | undefined;
+        const effortState = getSessionEffortState(pi, ctx.models.current());
+        if (!effortState) {
+          error = "The current model does not expose selectable effort levels";
+        } else if (!effortState.available.includes(message.effort)) {
+          error = `Effort "${message.effort}" is not available for the current model`;
+        } else {
+          pi.setThinkingLevel(toThinkingLevel(message.effort));
+        }
+        sendModelState(ctx, { commandId: message.commandId, ...(error ? { error } : {}), force: true });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        sendModelState(ctx, { commandId: message.commandId, error: detail, force: true });
+        reportError(error instanceof Error ? error : new Error(detail));
+      }
       return;
     }
     if (message.type === "execute_slash_command") {
@@ -543,7 +566,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     currentContext = undefined;
   });
 }
-function getSessionModelState(ctx: ExtensionContext): SessionModelState {
+function getSessionModelState(pi: ExtensionAPI, ctx: ExtensionContext): SessionModelState {
   const currentModel = ctx.models.current();
   const current = currentModel ? describeModel(currentModel) : undefined;
   const availableBySelector = new Map<string, ModelDescriptor>();
@@ -552,10 +575,46 @@ function getSessionModelState(ctx: ExtensionContext): SessionModelState {
     availableBySelector.set(modelSelector(descriptor), descriptor);
   }
   if (current) availableBySelector.set(modelSelector(current), current);
+  const effort = getSessionEffortState(pi, currentModel);
   return {
     ...(current ? { current } : {}),
     available: [...availableBySelector.values()],
+    ...(effort ? { effort } : {}),
   };
+}
+
+function getSessionEffortState(
+  pi: ExtensionAPI,
+  model: ExtensionContext["model"],
+): SessionEffortState | undefined {
+  if (!model?.reasoning || !model.thinking?.efforts?.length) return undefined;
+  const supported = [...model.thinking.efforts] as ModelEffort[];
+  const available = [...new Set<ModelEffort>(["off", ...supported])];
+  const parsed = ModelEffortSchema.safeParse(pi.getThinkingLevel());
+  const current = parsed.success && available.includes(parsed.data) ? parsed.data : undefined;
+  return {
+    available,
+    ...(current ? { current } : {}),
+  };
+}
+
+function toThinkingLevel(effort: ModelEffort): Parameters<ExtensionAPI["setThinkingLevel"]>[0] {
+  switch (effort) {
+    case "off":
+      return ThinkingLevel.Off;
+    case "minimal":
+      return ThinkingLevel.Minimal;
+    case "low":
+      return ThinkingLevel.Low;
+    case "medium":
+      return ThinkingLevel.Medium;
+    case "high":
+      return ThinkingLevel.High;
+    case "xhigh":
+      return ThinkingLevel.XHigh;
+    case "max":
+      return ThinkingLevel.Max;
+  }
 }
 
 function describeModel(model: { provider: string; id: string; name: string }): ModelDescriptor {

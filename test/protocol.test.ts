@@ -61,6 +61,26 @@ test("accepts per-session model state and selection commands", () => {
   assert.equal(selectionResult.success, true);
 });
 
+test("accepts model effort state and selection commands", () => {
+  const stateResult = ClientMessageSchema.safeParse({
+    type: "model_state",
+    sessionId: "session-1",
+    modelState: {
+      ...modelState,
+      effort: { current: "high", available: ["off", "low", "medium", "high"] },
+    },
+  });
+  const selectionResult = ServerMessageSchema.safeParse({
+    type: "set_effort",
+    sessionId: "session-1",
+    commandId: "command-effort-1",
+    effort: "high",
+  });
+
+  assert.equal(stateResult.success, true);
+  assert.equal(selectionResult.success, true);
+});
+
 test("accepts live session title updates", () => {
   assert.equal(
     ClientMessageSchema.safeParse({

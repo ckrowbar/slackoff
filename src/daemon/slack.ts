@@ -58,7 +58,7 @@ import {
 } from "./blocks.js";
 import { parseThreadCommand } from "./commands.js";
 import { downloadSlackImages } from "./images.js";
-import { TmuxLauncher } from "./launcher.js";
+import { TmuxAttachmentTracker, TmuxLauncher } from "./launcher.js";
 import type { ActiveSession } from "./registry.js";
 import { SessionRegistry } from "./registry.js";
 
@@ -139,7 +139,7 @@ export class SlackController {
   readonly #rootRefreshTimers = new Map<string, NodeJS.Timeout>();
   readonly #closedBindings = new Set<string>();
   readonly #threadPermalinks = new Map<string, string>();
-  readonly #pendingTmuxAttachments: Array<{ name: string; expiresAt: number }> = [];
+  readonly #tmuxAttachments = new TmuxAttachmentTracker();
   #homeRefreshTimer: NodeJS.Timeout | undefined;
   #homeNotice: string | undefined;
 
@@ -161,14 +161,12 @@ export class SlackController {
   }
 
   claimTmuxAttachment(session: SessionDescriptor): SessionDescriptor {
-    const now = Date.now();
-    while (this.#pendingTmuxAttachments[0]?.expiresAt && this.#pendingTmuxAttachments[0].expiresAt <= now) {
-      this.#pendingTmuxAttachments.shift();
-    }
-    const pending = this.#pendingTmuxAttachments.shift();
-    return pending
-      ? { ...session, project: pending.name, tmuxSessionName: pending.name }
-      : session;
+    const name = this.#tmuxAttachments.claim(session.id, session.tmuxSessionName);
+    return name ? { ...session, project: name, tmuxSessionName: name } : session;
+  }
+
+  completeTmuxAttachment(sessionId: string): void {
+    this.#tmuxAttachments.complete(sessionId);
   }
 
   async start(): Promise<void> {
@@ -201,6 +199,8 @@ export class SlackController {
             collapsed: false,
             model: session.modelState.current,
             models: session.modelState.available,
+            effort: session.modelState.effort?.current,
+            efforts: session.modelState.effort?.available,
           }),
         });
         await this.#getThreadPermalink(binding);
@@ -227,6 +227,8 @@ export class SlackController {
         collapsed: false,
         model: session.modelState.current,
         models: session.modelState.available,
+        effort: session.modelState.effort?.current,
+        efforts: session.modelState.effort?.available,
       }),
     });
     if (!result.channel || !result.ts) throw new Error("Slack did not return a DM channel and message timestamp");
@@ -246,6 +248,8 @@ export class SlackController {
       collapsed: record.collapsed,
       model: record.session.modelState.current,
       models: record.session.modelState.available,
+      effort: record.session.modelState.effort?.current,
+      efforts: record.session.modelState.effort?.available,
     });
   }
 
@@ -467,15 +471,23 @@ export class SlackController {
         const paneId = parsedState.data[HOME_ATTACH_BLOCK][HOME_ATTACH_INPUT].selected_option.value;
         const selected = (await this.#launcher.listOmpSessions()).find((session) => session.paneId === paneId);
         if (!selected) throw new Error("The selected OMP tmux pane is no longer available");
-        const pending = { name: selected.name, expiresAt: Date.now() + 15_000 };
-        this.#pendingTmuxAttachments.push(pending);
+        const attachment = this.#tmuxAttachments.begin(selected.name);
         try {
           await this.#launcher.enableSlackoff(paneId);
         } catch (error) {
-          const index = this.#pendingTmuxAttachments.indexOf(pending);
-          if (index >= 0) this.#pendingTmuxAttachments.splice(index, 1);
+          attachment.cancel();
           throw error;
         }
+        void attachment.promise.then(
+          () => {
+            this.#homeNotice = `Connected tmux session \`${selected.name}\` to Slackoff.`;
+            this.scheduleHomeRefresh();
+          },
+          (error: unknown) => {
+            this.#homeNotice = `Attach failed: ${error instanceof Error ? error.message : String(error)}`;
+            this.scheduleHomeRefresh();
+          },
+        );
         this.#homeNotice = `Enabling Slackoff in tmux session \`${selected.name}\`.`;
         await ack();
         await this.publishHome();
@@ -507,12 +519,24 @@ export class SlackController {
       const name = parsedState.data[HOME_NAME_BLOCK][HOME_NAME_INPUT].value;
       const cwd = parsedState.data[HOME_CWD_BLOCK][HOME_CWD_INPUT].value;
       const prompt = parsedState.data[HOME_PROMPT_BLOCK][HOME_PROMPT_INPUT].value ?? undefined;
+      const attachment = this.#tmuxAttachments.begin(name.trim());
       try {
         const launched = await this.#launcher.launch({ name, cwd, ...(prompt ? { prompt } : {}) });
-        this.#homeNotice = `Started tmux session \`${launched.name}\` in \`${launched.cwd}\`.`;
+        this.#homeNotice = `Starting tmux session \`${launched.name}\` in \`${launched.cwd}\`…`;
         await ack();
         await this.publishHome();
+        void attachment.promise.then(
+          () => {
+            this.#homeNotice = `Started tmux session \`${launched.name}\` in \`${launched.cwd}\` and connected it to Slackoff.`;
+            this.scheduleHomeRefresh();
+          },
+          (error: unknown) => {
+            this.#homeNotice = `Launch failed: ${error instanceof Error ? error.message : String(error)}`;
+            this.scheduleHomeRefresh();
+          },
+        );
       } catch (error) {
+        attachment.cancel();
         const message = error instanceof Error ? error.message : String(error);
         const block = message.startsWith("Working directory") ? HOME_CWD_BLOCK : HOME_NAME_BLOCK;
         await ack({ response_action: "errors", errors: { [block]: message } });
@@ -536,10 +560,13 @@ export class SlackController {
         : undefined;
       if (launchRequest) {
         let resultText: string;
+        const attachment = this.#tmuxAttachments.begin(launchRequest.name);
         try {
           const launched = await this.#launcher.launch(launchRequest);
+          await attachment.promise;
           resultText = `${SESSION_LAUNCH_SUCCESS_PREFIX}${launched.name}`;
         } catch (error) {
+          attachment.cancel();
           resultText = `${SESSION_LAUNCH_FAILURE_PREFIX}${error instanceof Error ? error.message : String(error)}`;
         }
         for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -612,6 +639,27 @@ export class SlackController {
             );
             return;
           }
+          case "effort": {
+            if (!record.socket || record.collapsed) return;
+            const available = record.session.modelState.effort?.available ?? [];
+            if (!available.includes(command.effort)) {
+              await this.#app.client.chat.postMessage({
+                channel: record.binding.channelId,
+                thread_ts: record.binding.threadTs,
+                text: `Could not change model: effort "${command.effort}" is not available`,
+              });
+              return;
+            }
+            record.socket.write(
+              encodeMessage({
+                type: "set_effort",
+                sessionId: record.session.id,
+                commandId: randomUUID(),
+                effort: command.effort,
+              }),
+            );
+            return;
+          }
           case "omp":
             await this.routeSlashCommand(record, command.command);
             return;
@@ -620,8 +668,6 @@ export class SlackController {
       if (images.length === 0 && text && (await this.#routeQuestionAnswer(record, text))) return;
       await this.routeInstruction(record, text, images);
     });
-
-    
 
     this.#app.action(MODEL_ACTION, async ({ ack, body, action }) => {
       await ack();

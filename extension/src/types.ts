@@ -1,4 +1,5 @@
-import type { SessionStatus } from "../../src/protocol.js";
+import type { ModelEffort, SessionStatus } from "../../src/protocol.js";
+export type { ModelEffort };
 import type { SupportedImageMimeType } from "../../src/image-inputs.js";
 import type { SessionLaunchRequest } from "../../src/session-launch.js";
 
@@ -55,7 +56,9 @@ export interface SessionView {
   /** Short phrase for current work, empty when unknown. */
   activity: string;
   model?: ModelOption;
+  effort?: ModelEffort;
   models: ModelOption[];
+  efforts: ModelEffort[];
   /** Closed threads render as a single collapsed row and accept no input. */
   collapsed: boolean;
   /** Epoch ms of the root card, i.e. when the session bound to Slack. */
@@ -140,6 +143,7 @@ export interface Controller {
   answerQuestion(sessionId: string, answers: readonly string[]): Promise<void>;
   stopTurn(sessionId: string): Promise<void>;
   setModel(sessionId: string, selector: string): Promise<void>;
+  setEffort(sessionId: string, effort: ModelEffort): Promise<void>;
   closeThread(sessionId: string): Promise<void>;
 }
 

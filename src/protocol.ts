@@ -26,19 +26,27 @@ export const ModelDescriptorSchema = z.object({
   name: z.string().min(1),
 });
 export type ModelDescriptor = z.infer<typeof ModelDescriptorSchema>;
+export const ModelEffortSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+export type ModelEffort = z.infer<typeof ModelEffortSchema>;
+
+export const SessionEffortStateSchema = z.object({
+  current: ModelEffortSchema.optional(),
+  available: z.array(ModelEffortSchema),
+});
+export type SessionEffortState = z.infer<typeof SessionEffortStateSchema>;
 
 export const SessionModelStateSchema = z.object({
   current: ModelDescriptorSchema.optional(),
   available: z.array(ModelDescriptorSchema),
+  effort: SessionEffortStateSchema.optional(),
 });
 export type SessionModelState = z.infer<typeof SessionModelStateSchema>;
+
 export const ImageInputSchema = z.object({
   data: z.string().min(1),
   mimeType: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]),
 });
 export type ImageInput = z.infer<typeof ImageInputSchema>;
-
-
 
 export const SessionDescriptorSchema = z.object({
   id: z.string().min(1),
@@ -179,13 +187,18 @@ const SetModelMessageSchema = z.object({
   commandId: z.string().min(1),
   selector: z.string().min(1),
 });
+const SetEffortMessageSchema = z.object({
+  type: z.literal("set_effort"),
+  sessionId: z.string().min(1),
+  commandId: z.string().min(1),
+  effort: ModelEffortSchema,
+});
 const ExecuteSlashCommandMessageSchema = z.object({
   type: z.literal("execute_slash_command"),
   sessionId: z.string().min(1),
   commandId: z.string().min(1),
   command: z.string().regex(/^\/\S+(?:[ \t]+.*)?$/),
 });
-
 
 const ReplacedMessageSchema = z.object({
   type: z.literal("replaced"),
@@ -205,6 +218,7 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   InstructionMessageSchema,
   StopMessageSchema,
   SetModelMessageSchema,
+  SetEffortMessageSchema,
   ExecuteSlashCommandMessageSchema,
   ReplacedMessageSchema,
   QuestionAnswerMessageSchema,
@@ -212,6 +226,7 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
 export type ResponseMessage = z.infer<typeof ResponseMessageSchema>;
 export type InstructionMessage = z.infer<typeof InstructionMessageSchema>;
+export type SetEffortMessage = z.infer<typeof SetEffortMessageSchema>;
 export type StopMessage = z.infer<typeof StopMessageSchema>;
 export type SetModelMessage = z.infer<typeof SetModelMessageSchema>;
 export type ExecuteSlashCommandMessage = z.infer<typeof ExecuteSlashCommandMessageSchema>;

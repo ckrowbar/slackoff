@@ -60,6 +60,8 @@ function rootCard(input: CardInput = {}): unknown {
       collapsed: input.collapsed ?? false,
       model: SOL,
       models: [SOL],
+      effort: "high",
+      efforts: ["off", "low", "medium", "high"],
     }),
   };
 }
@@ -410,6 +412,11 @@ const commandCases: CommandCase[] = [
     name: "setModel",
     run: (controller) => controller.setModel(SESSION_ID, "anthropic/claude-opus-4-6"),
     text: "!model anthropic/claude-opus-4-6",
+  },
+  {
+    name: "setEffort",
+    run: (controller) => controller.setEffort(SESSION_ID, "high"),
+    text: "!effort high",
   },
   { name: "closeThread", run: (controller) => controller.closeThread(SESSION_ID), text: "!close" },
 ];

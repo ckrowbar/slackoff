@@ -502,9 +502,22 @@
 .slackoff-console .session-header__id { color: var(--so-faint); font-family: var(--so-font-mono); }
 .slackoff-console .session-header__actions { min-width: 0; gap: var(--so-space-2); }
 
-.slackoff-console .model-picker { min-width: 0; }
-.slackoff-console .model-picker__select {
-  width: min(25vw, 260px);
+.slackoff-console .model-picker,
+.slackoff-console .effort-picker {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--so-space-1);
+}
+.slackoff-console .effort-picker { flex: 0 0 auto; }
+.slackoff-console .picker-label {
+  color: var(--so-faint);
+  font: 10px/1 var(--so-font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.slackoff-console .model-picker__select,
+.slackoff-console .effort-picker__select {
   height: 36px;
   padding: 0 28px 0 var(--so-space-2);
   overflow: hidden;
@@ -516,8 +529,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.slackoff-console .model-picker__select:hover { border-color: var(--so-border-strong); color: var(--so-text); }
+.slackoff-console .model-picker__select { width: min(25vw, 260px); }
+.slackoff-console .effort-picker__select { width: 124px; }
+.slackoff-console .model-picker__select:hover,
+.slackoff-console .effort-picker__select:hover { border-color: var(--so-border-strong); color: var(--so-text); }
 .slackoff-console .primary-button,
 .slackoff-console .secondary-button,
 .slackoff-console .text-button,
@@ -746,6 +761,7 @@
   .slackoff-console .topbar { grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 190px) auto auto; gap: var(--so-space-2); padding-inline: var(--so-space-3); }
   .slackoff-console .session-header { gap: var(--so-space-2); padding-inline: var(--so-space-3); }
   .slackoff-console .model-picker__select { width: 190px; }
+  .slackoff-console .effort-picker__select { width: 118px; }
   .slackoff-console .close-button { padding-inline: var(--so-space-2); }
   .slackoff-console .transcript__stream,
   .slackoff-console .transcript__question-host { padding-inline: var(--so-space-4); }
@@ -755,6 +771,7 @@
   .slackoff-console .filter-chips { display: none; }
   .slackoff-console .topbar { grid-template-columns: minmax(100px, 1fr) minmax(100px, 180px) auto auto; }
   .slackoff-console .model-picker__select { width: 150px; }
+  .slackoff-console .effort-picker__select { width: 108px; }
   .slackoff-console .session-header__meta,
   .slackoff-console .close-button { display: none; }
 }

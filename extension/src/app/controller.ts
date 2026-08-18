@@ -12,6 +12,7 @@ import type {
   ConnectionState,
   Controller,
   ImageUpload,
+  ModelEffort,
   PendingQuestion,
   SessionView,
   StatusFilter,
@@ -73,7 +74,7 @@ const ReadCursorMessageSchema = z.looseObject({
   ts: z.string().regex(/^\d+\.\d+$/),
   latest_reply: z.string().regex(/^\d+\.\d+$/).optional(),
 });
-const LAUNCH_RESULT_POLLS = 15;
+const LAUNCH_RESULT_POLLS = 20;
 const LAUNCH_RESULT_POLL_MS = 2_000;
 
 type PollScope = "sessions" | "thread";
@@ -292,6 +293,14 @@ class SlackController implements Controller {
     const trimmed = selector.trim();
     if (!trimmed.includes("/")) throw new Error(`Model selector must be "provider/id", got "${selector}"`);
     await this.#postCommand(sessionId, `!model ${trimmed}`);
+  }
+
+  async setEffort(sessionId: string, effort: ModelEffort): Promise<void> {
+    const session = this.#requireControllable(sessionId);
+    if (!session.efforts.includes(effort)) {
+      throw new Error(`Effort "${effort}" is not available for "${session.title}"`);
+    }
+    await this.#postCommand(sessionId, `!effort ${effort}`);
   }
 
   async closeThread(sessionId: string): Promise<void> {

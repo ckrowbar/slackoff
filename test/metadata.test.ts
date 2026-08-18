@@ -28,6 +28,8 @@ const sessionMetadata = buildSessionMetadata({
   collapsed: false,
   model: models[0],
   models,
+  effort: "high",
+  efforts: ["off", "low", "medium", "high"],
 });
 
 const transcriptMetadata = buildTranscriptMetadata({
@@ -82,6 +84,8 @@ test("session metadata round-trips with the model list decoded", () => {
     activity: "Editing src/parser.ts",
     collapsed: false,
     model: "openai-codex/gpt-5.6-sol",
+    effort: "high",
+    efforts: ["off", "low", "medium", "high"],
     models,
   });
 });
@@ -162,6 +166,13 @@ test("unreadable metadata falls back to undefined instead of throwing", () => {
       raw: {
         event_type: SESSION_METADATA_EVENT,
         event_payload: { ...sessionMetadata.event_payload, models: "[{provider:" },
+      },
+    },
+    {
+      name: "malformed efforts JSON",
+      raw: {
+        event_type: SESSION_METADATA_EVENT,
+        event_payload: { ...sessionMetadata.event_payload, efforts: "[high" },
       },
     },
     {
