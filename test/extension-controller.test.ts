@@ -354,6 +354,8 @@ test("createSession posts a launch request and waits for daemon success", async 
   const post = h.calls.find((entry) => entry.method === POST);
   assert.ok(post);
   assert.equal(post.params.thread_ts, undefined);
+  assert.equal(post.params.parse, "none");
+  assert.equal(post.params.mrkdwn, false);
   assert.deepEqual(parseSessionLaunchRequest(String(post.params.text)), {
     name: "ui-smoke",
     cwd: "~/src/slackoff",

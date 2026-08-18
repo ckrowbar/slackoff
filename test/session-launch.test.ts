@@ -14,13 +14,27 @@ test("session launch requests round-trip required and optional fields", () => {
   assert.deepEqual(parseSessionLaunchRequest(encodeSessionLaunchRequest(minimal)), minimal);
 });
 
-test("session launch parser rejects malformed and overlong requests", () => {
+test("session launch parser recovers URLs reformatted by Slack", () => {
+  const message =
+    `${SESSION_LAUNCH_REQUEST_PREFIX}{"name":"want-to-deploy","cwd":"~","prompt":"Review <https://example.com/change%22}|https://example.com/change"}>`;
+  assert.deepEqual(parseSessionLaunchRequest(message), {
+    name: "want-to-deploy",
+    cwd: "~",
+    prompt: "Review https://example.com/change",
+  });
+});
+
+test("session launch parser distinguishes ordinary messages from malformed requests", () => {
   assert.equal(parseSessionLaunchRequest("ordinary message"), undefined);
-  assert.equal(parseSessionLaunchRequest(`${SESSION_LAUNCH_REQUEST_PREFIX}{broken`), undefined);
-  assert.equal(
-    parseSessionLaunchRequest(
-      `${SESSION_LAUNCH_REQUEST_PREFIX}${JSON.stringify({ name: "valid", cwd: "/tmp", prompt: "x".repeat(3_001) })}`,
-    ),
-    undefined,
+  assert.throws(
+    () => parseSessionLaunchRequest(`${SESSION_LAUNCH_REQUEST_PREFIX}{broken`),
+    /Invalid Slackoff launch request/,
+  );
+  assert.throws(
+    () =>
+      parseSessionLaunchRequest(
+        `${SESSION_LAUNCH_REQUEST_PREFIX}${JSON.stringify({ name: "valid", cwd: "/tmp", prompt: "x".repeat(3_001) })}`,
+      ),
+    /Invalid Slackoff launch request/,
   );
 });

@@ -2,7 +2,7 @@ import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { ExtensionAPI, ExtensionContext, MessageEndEvent } from "@oh-my-pi/pi-coding-agent";
-import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { z } from "zod";
 
 import { BridgeClient } from "./client.js";
@@ -308,7 +308,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
         } else if (!effortState.available.includes(message.effort)) {
           error = `Effort "${message.effort}" is not available for the current model`;
         } else {
-          pi.setThinkingLevel(toThinkingLevel(message.effort));
+          pi.setThinkingLevel(message.effort as ThinkingLevel);
         }
         sendModelState(ctx, { commandId: message.commandId, ...(error ? { error } : {}), force: true });
       } catch (error) {
@@ -598,24 +598,6 @@ function getSessionEffortState(
   };
 }
 
-function toThinkingLevel(effort: ModelEffort): Parameters<ExtensionAPI["setThinkingLevel"]>[0] {
-  switch (effort) {
-    case "off":
-      return ThinkingLevel.Off;
-    case "minimal":
-      return ThinkingLevel.Minimal;
-    case "low":
-      return ThinkingLevel.Low;
-    case "medium":
-      return ThinkingLevel.Medium;
-    case "high":
-      return ThinkingLevel.High;
-    case "xhigh":
-      return ThinkingLevel.XHigh;
-    case "max":
-      return ThinkingLevel.Max;
-  }
-}
 
 function describeModel(model: { provider: string; id: string; name: string }): ModelDescriptor {
   return { provider: model.provider, id: model.id, name: model.name || model.id };

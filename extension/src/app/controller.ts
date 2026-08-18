@@ -235,6 +235,8 @@ class SlackController implements Controller {
       const raw = await this.#deps.call<unknown>("chat.postMessage", {
         channel: this.#deps.channelId,
         text: encodeSessionLaunchRequest(request),
+        parse: "none",
+        mrkdwn: false,
       });
       if (generation !== this.#generation) throw new Error("Session creation cancelled");
       const posted = LaunchPostResponseSchema.safeParse(raw);

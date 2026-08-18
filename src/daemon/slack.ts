@@ -16,6 +16,7 @@ import {
 import {
   parseSessionLaunchRequest,
   SESSION_LAUNCH_FAILURE_PREFIX,
+  SESSION_LAUNCH_REQUEST_PREFIX,
   SESSION_LAUNCH_SUCCESS_PREFIX,
 } from "../session-launch.js";
 import {
@@ -555,18 +556,22 @@ export class SlackController {
         return;
       }
 
-      const launchRequest = !message.thread_ts
-        ? parseSessionLaunchRequest(message.text.trim())
-        : undefined;
-      if (launchRequest) {
+      const launchText = message.text.trim();
+      if (!message.thread_ts && launchText.startsWith(SESSION_LAUNCH_REQUEST_PREFIX)) {
         let resultText: string;
-        const attachment = this.#tmuxAttachments.begin(launchRequest.name);
         try {
-          const launched = await this.#launcher.launch(launchRequest);
-          await attachment.promise;
-          resultText = `${SESSION_LAUNCH_SUCCESS_PREFIX}${launched.name}`;
+          const launchRequest = parseSessionLaunchRequest(launchText);
+          if (!launchRequest) throw new Error("Invalid Slackoff launch request");
+          const attachment = this.#tmuxAttachments.begin(launchRequest.name);
+          try {
+            const launched = await this.#launcher.launch(launchRequest);
+            await attachment.promise;
+            resultText = `${SESSION_LAUNCH_SUCCESS_PREFIX}${launched.name}`;
+          } catch (error) {
+            attachment.cancel();
+            throw error;
+          }
         } catch (error) {
-          attachment.cancel();
           resultText = `${SESSION_LAUNCH_FAILURE_PREFIX}${error instanceof Error ? error.message : String(error)}`;
         }
         for (let attempt = 0; attempt < 3; attempt += 1) {

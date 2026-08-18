@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { parseMessageMetadata, type QuestionMetadataState } from "../../../src/metadata.js";
 import { SessionStatusSchema, type SessionStatus } from "../../../src/protocol.js";
+import { flattenSlackLinks, unescapeMrkdwn } from "../../../src/slack-text.js";
 import type {
   ModelEffort,
   ModelOption,
@@ -139,24 +140,6 @@ export const RawSlackMessageSchema = z.looseObject({
 export type RawSlackMessage = z.infer<typeof RawSlackMessageSchema>;
 
 /* ---------- text helpers ---------- */
-
-/** Reverse the daemon's escapeMrkdwn. Entities are undone after `&amp;` so `&amp;lt;` survives. */
-export function unescapeMrkdwn(text: string): string {
-  return text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
-}
-
-/**
- * Flatten the `<…|…>` link and mention syntax Slack stores for text the user typed, so the UI
- * renders the same thing the user saw in Slack.
- */
-export function flattenSlackLinks(text: string): string {
-  return text.replace(/<([^<>]*)>/g, (_match, body: string) => {
-    const pipe = body.indexOf("|");
-    if (pipe !== -1) return body.slice(pipe + 1) || body.slice(0, pipe);
-    // `<!here>` and `<!channel>` are broadcasts; a bare `<@U…>` or `<#C…>` already reads fine.
-    return body.startsWith("!") ? `@${body.slice(1)}` : body;
-  });
-}
 
 function readable(text: string): string {
   return unescapeMrkdwn(flattenSlackLinks(text));

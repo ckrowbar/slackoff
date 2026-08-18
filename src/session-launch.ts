@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { flattenSlackLinks, unescapeMrkdwn } from "./slack-text.js";
+
 export const SESSION_LAUNCH_REQUEST_PREFIX = "!slackoff-launch ";
 export const SESSION_LAUNCH_SUCCESS_PREFIX = "Slackoff launch succeeded: ";
 export const SESSION_LAUNCH_FAILURE_PREFIX = "Slackoff launch failed: ";
@@ -18,12 +20,16 @@ export function encodeSessionLaunchRequest(request: SessionLaunchRequest): strin
 
 export function parseSessionLaunchRequest(text: string): SessionLaunchRequest | undefined {
   if (!text.startsWith(SESSION_LAUNCH_REQUEST_PREFIX)) return undefined;
+  const payload = unescapeMrkdwn(
+    flattenSlackLinks(text.slice(SESSION_LAUNCH_REQUEST_PREFIX.length)),
+  );
+  let value: unknown;
   try {
-    const parsed = SessionLaunchRequestSchema.safeParse(
-      JSON.parse(text.slice(SESSION_LAUNCH_REQUEST_PREFIX.length)),
-    );
-    return parsed.success ? parsed.data : undefined;
+    value = JSON.parse(payload);
   } catch {
-    return undefined;
+    throw new Error("Invalid Slackoff launch request");
   }
+  const parsed = SessionLaunchRequestSchema.safeParse(value);
+  if (!parsed.success) throw new Error("Invalid Slackoff launch request");
+  return parsed.data;
 }
