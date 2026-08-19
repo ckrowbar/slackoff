@@ -146,7 +146,7 @@ export interface Controller {
   stopTurn(sessionId: string): Promise<void>;
   setModel(sessionId: string, selector: string): Promise<void>;
   setEffort(sessionId: string, effort: ModelEffort): Promise<void>;
-  closeThread(sessionId: string): Promise<void>;
+  closeThread(sessionId: string, closeTmux?: boolean): Promise<void>;
 }
 
 export interface AppPreferences {

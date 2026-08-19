@@ -121,6 +121,7 @@ In Slack, reply in the session thread with a normal instruction or use a control
 | `!model <provider>/<id>` | Switch the session model |
 | `!omp <command> [arguments]` | Run a supported OMP slash command without the leading slash |
 | `!close` | Close the Slack thread's session binding |
+| `!close tmux` | Close the Slack thread's session binding and its OMP tmux session |
 
 Examples:
 

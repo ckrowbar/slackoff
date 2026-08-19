@@ -101,9 +101,8 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     void controller.setEffort(selected.sessionId, effortSelect.value).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
   };
   effortLabelNode.append(effortSelect);
-  const stopButton = element("button", "secondary-button stop-button", { type: "button", text: "Stop" });
   const closeButton = element("button", "text-button close-button", { type: "button", text: "Close thread" });
-  headerActions.append(modelLabelNode, effortLabelNode, stopButton, closeButton);
+  headerActions.append(modelLabelNode, effortLabelNode, closeButton);
   sessionHeader.append(headingCopy, headerActions);
 
   const toastArea = element("div", "toast-area", { ariaLabel: "Notifications", "aria-live": "polite" });
@@ -170,6 +169,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   const composer = new Composer(
     (sessionId, text) => controller.sendInstruction(sessionId, text),
     (sessionId, text, images) => controller.sendImages(sessionId, text, images),
+    (sessionId) => controller.stopTurn(sessionId),
     showToast,
   );
   const sessionList = new SessionList((sessionId) => {
@@ -196,21 +196,19 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   async function confirmClose(sessionId: string): Promise<void> {
     const session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
     if (!session) return;
-    const confirmed = await confirmDialog.ask({
+    const choice = await confirmDialog.ask({
       title: `Close “${session.title}”?`,
-      detail: "This closes the Slackoff thread and removes it from the session list. Slack keeps its message history.",
+      detail: "Close only the Slackoff thread, or also close its tmux session and stop the process. Slack keeps the thread history.",
       confirmLabel: "Close thread",
       danger: true,
+      alternativeLabel: "Close thread + tmux",
+      alternativeDanger: true,
     });
-    if (!confirmed) return;
-    await controller.closeThread(sessionId).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
+    if (choice === "cancel") return;
+    await controller.closeThread(sessionId, choice === "alternative").catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
   }
 
 
-  stopButton.onclick = () => {
-    const session = selectedSession();
-    if (session) void controller.stopTurn(session.sessionId).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
-  };
   closeButton.onclick = () => {
     const session = selectedSession();
     if (session) void confirmClose(session.sessionId);
@@ -280,7 +278,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
         const options = [
           element("option", "", {
             value: "",
-            text: selected.efforts.length === 0 ? "Effort unavailable" : "Model default",
+            text: selected.efforts.length === 0 ? "Effort unavailable" : "Current effort unknown",
             disabled: true,
           }),
           ...selected.efforts.map((effort) => element("option", "", { value: effort, text: EFFORT_LABELS[effort] })),
@@ -293,7 +291,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
       effortSelect.value = selected.effort ?? "";
       effortSelect.disabled = !selected.controllable || selected.efforts.length === 0;
       effortSelect.title = selected.efforts.length > 0 ? "Set the model's reasoning effort" : "This model has no selectable effort levels";
-      stopButton.disabled = selected.status !== "working" && selected.status !== "waiting";
       closeButton.disabled = selected.collapsed;
     } else {
       modelSignature = "";
@@ -325,7 +322,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     controller.stop();
     search.oninput = null;
     modelSelect.onchange = null;
-    stopButton.onclick = null;
     closeButton.onclick = null;
     sidebarLayout.destroy();
     for (const button of filterButtons.values()) button.onclick = null;

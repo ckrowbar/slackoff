@@ -70,7 +70,7 @@ and no model picker until the session next updates its card.
 | Stop | `!stop` |
 | Switch model | `!model <provider>/<id>` |
 | Run an OMP slash command | `!omp <command> [arguments]` |
-| Close thread | `!close` |
+| Close thread, with or without its tmux session | `!close` or `!close tmux` |
 | Add images | the image files, with optional instruction text |
 | Create session | a top-level launch request with name, working directory, and optional prompt |
 
