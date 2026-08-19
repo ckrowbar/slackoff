@@ -340,8 +340,8 @@
 }
 
 .slackoff-console .rail__new-session {
+  width: 30px;
   min-height: 30px;
-  padding-inline: var(--so-space-2);
 }
 
 .slackoff-console .session-list {
@@ -555,9 +555,16 @@
 .slackoff-console .secondary-button:hover:not(:disabled) { border-color: var(--so-border-strong); background: var(--so-hover); }
 .slackoff-console .text-button { background: transparent; color: var(--so-dim); }
 .slackoff-console .text-button:hover:not(:disabled) { background: var(--so-hover); color: var(--so-text); }
-.slackoff-console .close-button:hover:not(:disabled) { color: var(--so-red); }
 .slackoff-console .icon-button { min-width: 30px; padding: 0; background: transparent; color: var(--so-dim); font-size: 20px; }
 .slackoff-console .icon-button:hover { background: var(--so-hover); color: var(--so-text); }
+.slackoff-console .close-button,
+.slackoff-console .composer__stop {
+  width: 36px;
+  flex: 0 0 auto;
+}
+.slackoff-console .composer__stop { color: var(--so-red); font-size: 11px; }
+.slackoff-console .close-button:hover:not(:disabled),
+.slackoff-console .composer__stop:hover:not(:disabled) { background: var(--so-red-soft); color: var(--so-red); }
 
 .slackoff-console .sidebar-toggle {
   width: 32px;

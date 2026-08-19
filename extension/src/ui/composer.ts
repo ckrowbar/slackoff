@@ -23,7 +23,12 @@ export class Composer {
   #counter = element("span", "composer__counter", { text: "0 / 2800" });
   #reason = element("span", "composer__reason");
   #sendButton = element("button", "primary-button composer__send", { type: "button", text: "Send" });
-  #stopButton = element("button", "secondary-button composer__stop", { type: "button", text: "Stop" });
+  #stopButton = element("button", "icon-button composer__stop", {
+    type: "button",
+    text: "■",
+    ariaLabel: "Stop turn",
+    title: "Stop turn",
+  });
   #attachButton = element("button", "text-button composer__attach", { type: "button", text: "Add images" });
   #fileInput = element("input", "composer__file-input", {
     type: "file",

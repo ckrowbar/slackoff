@@ -57,9 +57,9 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   const search = element("input", "search-box__input", { type: "search", placeholder: "Search sessions", autocomplete: "off", spellcheck: "false", ariaLabel: "Search sessions" });
   search.oninput = () => controller.setQuery(search.value);
   searchWrap.append(search);
-  const newSessionButton = element("button", "secondary-button rail__new-session", {
+  const newSessionButton = element("button", "icon-button rail__new-session", {
     type: "button",
-    text: "New",
+    text: "+",
     ariaLabel: "New session",
     title: "New session",
   });
@@ -103,7 +103,12 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     void controller.setEffort(selected.sessionId, effortSelect.value).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
   };
   effortLabelNode.append(effortSelect);
-  const closeButton = element("button", "text-button close-button", { type: "button", text: "Close thread" });
+  const closeButton = element("button", "icon-button close-button", {
+    type: "button",
+    text: "×",
+    ariaLabel: "Close thread",
+    title: "Close thread",
+  });
   headerActions.append(modelLabelNode, effortLabelNode, closeButton);
   sessionHeader.append(headingCopy, headerActions);
 
