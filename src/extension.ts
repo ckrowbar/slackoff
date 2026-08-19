@@ -87,6 +87,27 @@ export function forwardBtwLifecycleEvent(
   }
 }
 
+interface RegistrationMaintenanceOptions {
+  enabled: boolean;
+  registered: boolean;
+  activate(): Promise<void>;
+  onRegistered(): void;
+  onError(error: Error): void;
+}
+
+export function maintainSlackoffRegistration(
+  options: RegistrationMaintenanceOptions,
+): Promise<void> | undefined {
+  if (!options.enabled) return undefined;
+  if (options.registered) {
+    options.onRegistered();
+    return undefined;
+  }
+  return options.activate().catch((error: unknown) => {
+    options.onError(error instanceof Error ? error : new Error(String(error)));
+  });
+}
+
 
 export default function slackoffExtension(pi: ExtensionAPI): void {
   const slackAskParameters = pi.zod.object({
@@ -118,6 +139,8 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
   let replacedNativeAsk = false;
   let lastModelStateSignature: string | undefined;
   let lastSessionTitle: string | undefined;
+  let lastRegistrationError: string | undefined;
+  let resetBindingOnNextRegistration = false;
 
   const reportError = (error: Error): void => {
     pi.logger.error("Slackoff extension error", {
@@ -125,6 +148,12 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       ...(error.stack ? { stack: error.stack } : {}),
     });
     currentContext?.ui.notify(`Slackoff: ${error.message}`, "error");
+  };
+
+  const reportRegistrationError = (error: Error): void => {
+    if (lastRegistrationError === error.message) return;
+    lastRegistrationError = error.message;
+    reportError(error);
   };
 
   const getClient = (): BridgeClient => {
@@ -251,6 +280,8 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       if (!response.ok || !response.binding) throw new Error(response.error ?? "Slackoff registration failed");
 
       registeredSessionId = sessionId;
+      resetBindingOnNextRegistration = false;
+      lastRegistrationError = undefined;
       lastModelStateSignature = JSON.stringify(modelState);
       lastSessionTitle = title;
       const bindingChanged = currentState.binding?.bindingId !== response.binding.bindingId;
@@ -531,9 +562,25 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     },
   });
 
+  const maintainRegistration = (): Promise<void> | undefined => {
+    const ctx = currentContext;
+    if (!ctx) return undefined;
+    return maintainSlackoffRegistration({
+      enabled: currentState.enabled,
+      registered: registeredSessionId !== undefined,
+      activate: () => activate(ctx, resetBindingOnNextRegistration),
+      onRegistered: () => {
+        sendSessionTitle();
+        sendModelState(ctx);
+      },
+      onError: reportRegistrationError,
+    });
+  };
+
   pi.on("session_start", async (_event, ctx) => {
     currentContext = ctx;
     currentState = restoreState(ctx);
+    resetBindingOnNextRegistration = false;
     if (process.env.SLACKOFF_AUTO_ENABLE === "1") {
       delete process.env.SLACKOFF_AUTO_ENABLE;
       if (!currentState.enabled) {
@@ -541,16 +588,9 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
         persistState();
       }
     }
-    if (currentState.enabled) await activate(ctx);
 
-    ctx.setInterval(() => {
-      if (currentState.enabled && !client?.connected) {
-        void activate(ctx).catch((error) => reportError(error instanceof Error ? error : new Error(String(error))));
-      } else if (currentState.enabled) {
-        sendSessionTitle();
-        sendModelState(ctx);
-      }
-    }, 5_000);
+    ctx.setInterval(() => void maintainRegistration(), 5_000);
+    await maintainRegistration();
   });
 
   pi.on("session_switch", async (event, ctx) => {
@@ -558,8 +598,8 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     currentContext = ctx;
     currentState = restoreState(ctx);
     if (event.reason === "new") currentState = { version: 1, enabled: false };
-    const resetBinding = event.reason === "fork" || event.reason === "handoff";
-    if (currentState.enabled) await activate(ctx, resetBinding);
+    resetBindingOnNextRegistration = event.reason === "fork" || event.reason === "handoff";
+    if (currentState.enabled) await maintainRegistration();
     else await disableSlackAsk();
   });
 
