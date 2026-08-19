@@ -1,9 +1,8 @@
 import type { AppState, Controller, ModelEffort, MountApp, SessionView, StatusFilter, Theme } from "../types.js";
 import { Composer } from "./composer.js";
 import { ConfirmDialog } from "./confirm.js";
-import { element, modelLabel, statusLabel } from "./dom.js";
-import { installKeys } from "./keys.js";
-import { CommandPalette } from "./palette.js";
+import { element, statusLabel } from "./dom.js";
+import { containKeyboardEvents } from "./keyboard-boundary.js";
 import { filterSessions, SessionList } from "./session-list.js";
 import { SessionCreator } from "./session-create.js";
 import { SidebarLayout } from "./sidebar.js";
@@ -38,7 +37,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   let modelSignature = "";
   let effortSignature = "";
   const timers = new Set<number>();
-  const paletteSessions = new Map<string, SessionView>();
 
   const shell = element("div", "console-shell");
   const topbar = element("header", "topbar");
@@ -87,7 +85,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   const headerActions = element("div", "session-header__actions");
   const modelLabelNode = element("label", "model-picker");
   modelLabelNode.append(element("span", "sr-only", { text: "Model" }));
-  const modelSelect = element("select", "model-picker__select", { ariaLabel: "Switch model", title: "Switch model. Use Command-K to search all models." });
+  const modelSelect = element("select", "model-picker__select", { ariaLabel: "Switch model", title: "Switch model" });
   modelSelect.onchange = () => {
     const selected = state.sessions.find((session) => session.sessionId === state.selectedSessionId);
     if (selected && modelSelect.value !== selected.model?.selector) {
@@ -110,27 +108,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   sessionHeader.append(headingCopy, headerActions);
 
   const toastArea = element("div", "toast-area", { ariaLabel: "Notifications", "aria-live": "polite" });
-  const shortcutSheet = element("div", "shortcut-sheet", { role: "presentation" });
-  shortcutSheet.hidden = true;
-  const shortcutDialog = element("section", "shortcut-sheet__dialog", { role: "dialog", ariaLabel: "Keyboard shortcuts", "aria-modal": "true" });
-  const shortcutHeading = element("header", "shortcut-sheet__header");
-  const shortcutClose = element("button", "icon-button", { type: "button", text: "×", ariaLabel: "Close keyboard shortcuts" });
-  shortcutHeading.append(element("h2", "shortcut-sheet__title", { text: "Keyboard shortcuts" }), shortcutClose);
-  const shortcuts = [
-    ["j / k", "Next / previous session"], ["↑ / ↓", "Next / previous session"], ["Enter", "Focus composer"],
-    ["Esc", "Leave composer / offer to stop"], ["⌘ / Ctrl K", "Command palette"], ["1–9", "Answer a pending question"],
-    ["g then a", "Jump to needs attention"], ["?", "Toggle this sheet"], ["Shift Enter", "New line in composer"],
-  ];
-  const shortcutRows = element("div", "shortcut-sheet__rows");
-  for (const [key, description] of shortcuts) {
-    const row = element("div", "shortcut-row");
-    row.append(element("kbd", "shortcut-row__key", { text: key }), element("span", "shortcut-row__description", { text: description }));
-    shortcutRows.append(row);
-  }
-  shortcutDialog.append(shortcutHeading, shortcutRows);
-  shortcutSheet.append(shortcutDialog);
-
-  const footer = element("footer", "console-footer", { text: "j/k move · Enter compose · ⌘K commands · 1–9 answer · ? shortcuts" });
   const confirmDialog = new ConfirmDialog();
 
   function showToast(message: string, isError = false): void {
@@ -203,7 +180,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   rail.append(railHeader, sessionList.node);
   main.append(sessionHeader, transcript.node, composer.node);
   body.append(rail, sidebarLayout.resizer, main);
-  shell.append(topbar, body, footer, toastArea, shortcutSheet, confirmDialog.node);
+  shell.append(topbar, body, toastArea, confirmDialog.node);
   shell.append(sessionCreator.node);
   root.append(shell);
 
@@ -215,16 +192,10 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     else if (!selectedCache || selectedCache.sessionId !== state.selectedSessionId || selectedCache.collapsed) selectedCache = undefined;
     return selected ?? selectedCache;
   }
-  function revealAndSelect(sessionId: string): void {
-    selectionRequested = true;
-    controller.setFilter("all");
-    controller.setQuery("");
-    controller.select(sessionId);
-  }
 
 
   async function confirmClose(sessionId: string): Promise<void> {
-    const session = state.sessions.find((candidate) => candidate.sessionId === sessionId) ?? paletteSessions.get(sessionId);
+    const session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
     if (!session) return;
     const confirmed = await confirmDialog.ask({
       title: `Close “${session.title}”?`,
@@ -236,15 +207,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     await controller.closeThread(sessionId).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
   }
 
-  const palette = new CommandPalette({
-    jump: revealAndSelect,
-    stop: (sessionId) => void controller.stopTurn(sessionId).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true)),
-    setModel: (sessionId, selector) => void controller.setModel(sessionId, selector).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true)),
-    close: (sessionId) => void confirmClose(sessionId),
-    refresh: () => void controller.refresh().then(() => showToast("Sync complete")).catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true)),
-    toggleTheme,
-  });
-  root.append(palette.node);
 
   stopButton.onclick = () => {
     const session = selectedSession();
@@ -253,10 +215,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   closeButton.onclick = () => {
     const session = selectedSession();
     if (session) void confirmClose(session.sessionId);
-  };
-  shortcutClose.onclick = () => { shortcutSheet.hidden = true; };
-  shortcutSheet.onclick = (event) => {
-    if (event.target === shortcutSheet) shortcutSheet.hidden = true;
   };
 
   function render(next: AppState): void {
@@ -290,12 +248,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     if (!search.matches(":focus") && search.value !== state.query) search.value = state.query;
 
     sessionList.update(visibleSessions, state.selectedSessionId, Date.now(), emptyCopy);
-    const openSessionIds = new Set(openSessions.map((session) => session.sessionId));
-    for (const session of openSessions) paletteSessions.set(session.sessionId, session);
-    for (const [sessionId] of paletteSessions) {
-      if (!openSessionIds.has(sessionId)) paletteSessions.delete(sessionId);
-    }
-    palette.update([...paletteSessions.values()], selected);
     sessionHeader.hidden = !selected;
     if (selected) {
       sessionTitle.textContent = selected.title;
@@ -340,7 +292,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
       }
       modelSelect.value = selected.model?.selector ?? "";
       modelSelect.disabled = !selected.controllable || selected.models.length === 0;
-      modelSelect.title = `${modelLabel(selected.model)} · Use Command-K to search ${selected.models.length} models`;
       effortSelect.value = selected.effort ?? "";
       effortSelect.disabled = !selected.controllable || selected.efforts.length === 0;
       effortSelect.title = selected.efforts.length > 0 ? "Set the model's reasoning effort" : "This model has no selectable effort levels";
@@ -357,45 +308,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     lastNotice = state.notice;
   }
 
-  const removeKeys = installKeys(root, {
-    paletteOpen: () => palette.isOpen(),
-    handlePaletteKey: (event) => palette.handleKey(event),
-    togglePalette: () => palette.toggle(),
-    moveSelection: (delta) => {
-      if (visibleSessions.length === 0) return;
-      const index = visibleSessions.findIndex((session) => session.sessionId === state.selectedSessionId);
-      const nextIndex = index < 0 ? 0 : Math.max(0, Math.min(visibleSessions.length - 1, index + delta));
-      const next = visibleSessions[nextIndex];
-      if (next) {
-        selectionRequested = true;
-        controller.select(next.sessionId);
-      }
-    },
-    focusComposer: () => composer.focus(),
-    composerFocused: () => composer.isFocused(),
-    blurComposer: () => composer.blur(),
-    offerStop: () => {
-      const session = selectedSession();
-      if (!session || (session.status !== "working" && session.status !== "waiting")) return;
-      void confirmDialog
-        .ask({ title: `Stop the active turn in “${session.title}”?`, confirmLabel: "Stop turn", danger: true })
-        .then((confirmed) => (confirmed ? controller.stopTurn(session.sessionId) : undefined))
-        .catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), true));
-    },
-    chooseQuestionOption: (index) => transcript.chooseNumber(index),
-    jumpToAttention: () => {
-      const session = state.attention[0];
-      if (session) {
-        revealAndSelect(session.sessionId);
-      } else {
-        showToast("No sessions need attention");
-      }
-    },
-    toggleShortcuts: () => {
-      shortcutSheet.hidden = !shortcutSheet.hidden;
-      if (!shortcutSheet.hidden) shortcutClose.focus();
-    },
-  });
+  const removeKeyboardBoundary = containKeyboardEvents(root);
 
   const unsubscribe = controller.subscribe(render);
   render(state);
@@ -406,7 +319,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     window.clearInterval(relativeTimer);
     for (const timer of timers) window.clearTimeout(timer);
     timers.clear();
-    removeKeys();
+    removeKeyboardBoundary();
     newSessionButton.onclick = null;
     themeObserver.disconnect();
     themeToggle.onclick = null;
@@ -416,15 +329,12 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     modelSelect.onchange = null;
     stopButton.onclick = null;
     closeButton.onclick = null;
-    shortcutClose.onclick = null;
-    shortcutSheet.onclick = null;
     sidebarLayout.destroy();
     for (const button of filterButtons.values()) button.onclick = null;
     sessionCreator.destroy();
     sessionList.destroy();
     transcript.destroy();
     composer.destroy();
-    palette.destroy();
     confirmDialog.destroy();
     shell.remove();
     if (!hadRootClass) root.classList.remove("slackoff-console");

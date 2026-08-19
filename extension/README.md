@@ -37,11 +37,10 @@ server, tunnel, companion extension or separate authentication.
 Open the Slackoff DM in Slack. The console detects that conversation and covers the full Slack page.
 Any other channel renders as stock Slack.
 
-`Alt+Shift+O` (`Command+Shift+O` on macOS) toggles the takeover, as does the toolbar icon in the
-extension build. Chrome reserves `Ctrl+Shift+O` for the bookmark manager, which is why the default
-differs. The userscript menu includes **Toggle Slackoff script**, **Toggle takeover**,
-**Re-detect Slackoff DM**, and **Toggle notifications**. Use **Toggle Slackoff script** to unmount
-the userscript until you turn it on again. The extension build uses its options page instead.
+The extension toolbar icon toggles the takeover. The userscript menu includes **Toggle Slackoff
+script**, **Toggle takeover**, **Re-detect Slackoff DM**, and **Toggle notifications**. Use
+**Toggle Slackoff script** to unmount the userscript until you turn it on again. The extension
+build uses its options page instead.
 
 ## What it shows
 
@@ -80,13 +79,6 @@ The `!` controls are recognised by the daemon (`src/daemon/commands.ts`). Use `!
 expects. A command must be a single line on its own. Any other text, including a multi-line message
 that merely starts with `!stop`, is delivered as an instruction exactly as before.
 
-## Keyboard
-
-`j` / `k` or arrows move between sessions. `Enter` focuses the composer and sends from it.
-`Shift+Enter` inserts a newline. `1` to `9` answer a pending question. `Cmd/Ctrl+K` opens the command
-palette, which is the fastest way to switch model when a session offers dozens. `g` then `a` jumps
-to the first session waiting on you. `Escape` leaves the composer, then offers to stop. `?` lists
-every shortcut.
 
 ## What it changes
 

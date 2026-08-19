@@ -58,11 +58,6 @@ export class Composer {
       this.#updateCounter();
       this.#updateDisabled();
     };
-    this.textarea.onkeydown = (event) => {
-      if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
-      event.preventDefault();
-      void this.submit();
-    };
     this.textarea.onpaste = (event) => {
       const files = Array.from(event.clipboardData?.files ?? []);
       if (!files.some((file) => file.type.startsWith("image/"))) return;
@@ -114,25 +109,10 @@ export class Composer {
     this.textarea.disabled = disabled || this.#sending;
     this.#attachButton.disabled = disabled || this.#sending;
     this.textarea.placeholder = disabled ? this.#disabledReason(session) : "Send an instruction…";
-    this.#reason.textContent = disabled
-      ? this.#disabledReason(session)
-      : "Enter to send · Drop or paste images · Shift+Enter for a new line";
+    this.#reason.textContent = disabled ? this.#disabledReason(session) : "Drop or paste images";
     this.#updateDisabled();
   }
 
-  focus(): void {
-    if (this.textarea.disabled) return;
-    this.textarea.focus();
-    this.textarea.setSelectionRange(this.textarea.value.length, this.textarea.value.length);
-  }
-
-  blur(): void {
-    this.textarea.blur();
-  }
-
-  isFocused(): boolean {
-    return this.textarea.matches(":focus");
-  }
 
   async submit(): Promise<void> {
     const session = this.#session;
@@ -180,7 +160,6 @@ export class Composer {
 
   destroy(): void {
     this.textarea.oninput = null;
-    this.textarea.onkeydown = null;
     this.textarea.onpaste = null;
     this.node.ondragover = null;
     this.node.ondragleave = null;

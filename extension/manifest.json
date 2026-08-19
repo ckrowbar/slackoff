@@ -21,14 +21,5 @@
   "action": {
     "default_title": "Toggle Slackoff Console takeover"
   },
-  "options_page": "options.html",
-  "commands": {
-    "toggle-takeover": {
-      "suggested_key": {
-        "default": "Alt+Shift+O",
-        "mac": "Command+Shift+O"
-      },
-      "description": "Toggle the Slackoff Console takeover"
-    }
-  }
+  "options_page": "options.html"
 }

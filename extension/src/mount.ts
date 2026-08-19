@@ -95,16 +95,6 @@ export class ConsoleShell {
   #overlay: ConsoleOverlay | undefined;
   #controller: Controller | undefined;
 
-  /**
-   * The extension also binds this through chrome.commands. Chrome consumes a registered command key
-   * itself and does not deliver it to the page, so only one of the two paths ever fires per press.
-   */
-  readonly #onKeyDown = (event: KeyboardEvent): void => {
-    if (event.code !== "KeyO" || !event.shiftKey || event.ctrlKey) return;
-    if (!event.altKey && !event.metaKey) return;
-    event.preventDefault();
-    void this.toggleTakeover();
-  };
 
   constructor(platform: Platform) {
     this.#platform = platform;
@@ -116,7 +106,6 @@ export class ConsoleShell {
     this.#unsubscribeSettings = this.#platform.onSettingsChanged((settings) => {
       void this.#applySettings(settings);
     });
-    document.addEventListener("keydown", this.#onKeyDown, true);
     // Slack is a single-page app whose navigations are not observable from here.
     this.#pollTimer = window.setInterval(() => this.#tick(), POLL_INTERVAL_MS);
     this.#tick();
@@ -127,7 +116,6 @@ export class ConsoleShell {
     this.#pollTimer = undefined;
     this.#unsubscribeSettings?.();
     this.#unsubscribeSettings = undefined;
-    document.removeEventListener("keydown", this.#onKeyDown, true);
     this.#unmount();
   }
 

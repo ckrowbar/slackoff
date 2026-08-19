@@ -166,9 +166,8 @@ npm run install:userscript
 The command opens a local page. Select **Install or update Slackoff Console** to fetch and build the
 latest revision from your current upstream branch, then confirm the change in Tampermonkey. Keep the
 command running until Tampermonkey finishes. Open the Slackoff direct message after installation.
-Use `Alt+Shift+O` on Linux or Windows, or `Command+Shift+O` on macOS, to toggle the console.
 
-See [`extension/README.md`](extension/README.md) for console controls, keyboard shortcuts, security behavior, and known Slack DOM fallbacks.
+See [`extension/README.md`](extension/README.md) for console controls, security behavior, and known Slack DOM fallbacks.
 
 ## Development
 

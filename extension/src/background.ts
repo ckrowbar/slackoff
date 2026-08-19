@@ -37,9 +37,6 @@ chrome.action.onClicked.addListener(() => {
   void toggleTakeover();
 });
 
-chrome.commands.onCommand.addListener((command) => {
-  if (command === "toggle-takeover") void toggleTakeover();
-});
 
 chrome.notifications.onClicked.addListener((notificationId) => {
   chrome.notifications.clear(notificationId);
