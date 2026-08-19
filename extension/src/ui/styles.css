@@ -578,7 +578,7 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 
 .slackoff-console .transcript__stream,
