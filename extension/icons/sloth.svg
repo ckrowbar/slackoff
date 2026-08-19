@@ -1,17 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Slackoff sloth">
-  <rect width="128" height="128" rx="28" fill="#4c8dff"/>
-  <circle cx="30" cy="66" r="15" fill="#604638"/>
-  <circle cx="98" cy="66" r="15" fill="#604638"/>
-  <ellipse cx="64" cy="65" rx="43" ry="46" fill="#604638"/>
-  <ellipse cx="64" cy="68" rx="35" ry="39" fill="#d9b486"/>
-  <path d="M37 52c7-11 19-13 27-4-7 15-18 22-31 17 0-5 1-9 4-13Z" fill="#725142"/>
-  <path d="M91 52c-7-11-19-13-27-4 7 15 18 22 31 17 0-5-1-9-4-13Z" fill="#725142"/>
-  <circle cx="49" cy="56" r="5" fill="#201d1b"/>
-  <circle cx="79" cy="56" r="5" fill="#201d1b"/>
-  <circle cx="47.5" cy="54.5" r="1.5" fill="#fff"/>
-  <circle cx="77.5" cy="54.5" r="1.5" fill="#fff"/>
-  <ellipse cx="64" cy="75" rx="20" ry="17" fill="#efd4aa"/>
-  <path d="M59 69c0-4 10-4 10 0 0 3-2 5-5 5s-5-2-5-5Z" fill="#352823"/>
-  <path d="M52 79c7 8 17 8 24 0" fill="none" stroke="#352823" stroke-width="4" stroke-linecap="round"/>
-  <path d="M47 94c10 7 24 7 34 0" fill="none" stroke="#b88d62" stroke-width="4" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Sloth emoji">
+  <text
+    x="64"
+    y="64"
+    dominant-baseline="central"
+    text-anchor="middle"
+    font-family="Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif"
+    font-size="112"
+  >🦥</text>
 </svg>
