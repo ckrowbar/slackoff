@@ -1,13 +1,13 @@
 /**
- * The content script inlines the bundled stylesheet into its shadow root, so it needs the CSS as
- * text. scripts/bundle-extension.mjs resolves this virtual specifier to extension/src/ui/styles.css
- * and loads it with esbuild's `text` loader.
- *
- * The specifier is virtual rather than a relative "./ui/styles.css" because TypeScript resolves a
- * relative non-code import only through a sidecar declaration next to the asset, and the stylesheet
- * lives in a directory this module must not add files to.
+ * The content script inlines the stylesheet and icon into its shadow-root bundle. The build script
+ * resolves these virtual specifiers to their source assets and loads both as text.
  */
 declare module "slackoff:styles" {
   const css: string;
   export default css;
+}
+
+declare module "slackoff:icon" {
+  const svg: string;
+  export default svg;
 }

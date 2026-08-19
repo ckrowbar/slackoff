@@ -122,6 +122,7 @@ In Slack, reply in the session thread with a normal instruction or use a control
 | `!omp <command> [arguments]` | Run a supported OMP slash command without the leading slash |
 | `!omp btw <question>` | Ask a non-persistent OMP side-channel question |
 | `!close` | Close the Slack thread's session binding |
+| `!close tmux` | Close the Slack thread's session binding and its OMP tmux session |
 
 Examples:
 
@@ -173,9 +174,8 @@ npm run install:userscript
 The command opens a local page. Select **Install or update Slackoff Console** to fetch and build the
 latest revision from your current upstream branch, then confirm the change in Tampermonkey. Keep the
 command running until Tampermonkey finishes. Open the Slackoff direct message after installation.
-Use `Alt+Shift+O` on Linux or Windows, or `Command+Shift+O` on macOS, to toggle the console.
 
-See [`extension/README.md`](extension/README.md) for console controls, keyboard shortcuts, security behavior, and known Slack DOM fallbacks.
+See [`extension/README.md`](extension/README.md) for console controls, security behavior, and known Slack DOM fallbacks.
 
 ## Development
 

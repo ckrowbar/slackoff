@@ -10,7 +10,7 @@ import type { ModelEffort } from "../protocol.js";
  */
 export type ThreadCommand =
   | { kind: "stop" }
-  | { kind: "close" }
+  | { kind: "close"; closeTmux: boolean }
   | { kind: "model"; selector: string }
   | { kind: "effort"; effort: ModelEffort }
   | { kind: "omp"; command: string };
@@ -27,7 +27,10 @@ export function parseThreadCommand(text: string): ThreadCommand | undefined {
     case "stop":
       return args.length === 0 ? { kind: "stop" } : undefined;
     case "close":
-      return args.length === 0 ? { kind: "close" } : undefined;
+      if (args.length === 0) return { kind: "close", closeTmux: false };
+      return args.length === 1 && args[0]?.toLowerCase() === "tmux"
+        ? { kind: "close", closeTmux: true }
+        : undefined;
     case "model": {
       const selector = args.length === 1 ? args[0] : undefined;
       if (!selector || !MODEL_SELECTOR.test(selector)) return undefined;

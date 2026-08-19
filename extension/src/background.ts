@@ -20,9 +20,7 @@ import type {
 const SLACK_TAB_MATCHES = ["https://app.slack.com/client/*", "https://*.slack.com/client/*"];
 const BADGE_COLOUR = "#d95f2b";
 
-/** Chrome rejects a basic notification without an icon, and the extension ships no image files. */
-const NOTIFICATION_ICON =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAmElEQVR42u3ayw2AMAwE0fRDUdRNNVABSiAfezdjifu8G9iUwhjNdR53yyMZnQ7TGx4GGR2+FDI7fhpiVfgUSFT8EER0fDdCGpAl/hciW/xnhDQga3wzQhqQPb6KABAJUIl/RQAAAAAAAADSAN6FAGzyTeD/SclWgt2Q4XZu3+Wu/Hrd4sBhcWKyOfJZnFltDt02vxownfMAtoQ5wzWrbM0AAAAASUVORK5CYII=";
+const NOTIFICATION_ICON = chrome.runtime.getURL("icons/sloth-128.png");
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   void handleRequest(message as BackgroundRequest).then(
@@ -35,10 +33,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.action.onClicked.addListener(() => {
   void toggleTakeover();
-});
-
-chrome.commands.onCommand.addListener((command) => {
-  if (command === "toggle-takeover") void toggleTakeover();
 });
 
 chrome.notifications.onClicked.addListener((notificationId) => {

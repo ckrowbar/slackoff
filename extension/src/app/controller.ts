@@ -302,11 +302,28 @@ class SlackController implements Controller {
     if (!session.efforts.includes(effort)) {
       throw new Error(`Effort "${effort}" is not available for "${session.title}"`);
     }
-    await this.#postCommand(sessionId, `!effort ${effort}`);
+    const previousEffort = session.effort;
+    this.#sessions = this.#sessions.map((candidate) =>
+      candidate.sessionId === sessionId ? { ...candidate, effort } : candidate,
+    );
+    this.#publish();
+    try {
+      await this.#postCommand(sessionId, `!effort ${effort}`);
+    } catch (error) {
+      this.#sessions = this.#sessions.map((candidate) => {
+        if (candidate.sessionId !== sessionId || candidate.effort !== effort) return candidate;
+        if (previousEffort) return { ...candidate, effort: previousEffort };
+        const restored = { ...candidate };
+        delete restored.effort;
+        return restored;
+      });
+      this.#publish();
+      throw error;
+    }
   }
 
-  async closeThread(sessionId: string): Promise<void> {
-    await this.#postCommand(sessionId, "!close");
+  async closeThread(sessionId: string, closeTmux = false): Promise<void> {
+    await this.#postCommand(sessionId, closeTmux ? "!close tmux" : "!close");
     this.#sessions = this.#sessions.filter((session) => session.sessionId !== sessionId);
     if (this.#selected === sessionId) {
       this.#selected = undefined;

@@ -1,3 +1,4 @@
+import slothIcon from "slackoff:icon";
 import styles from "slackoff:styles";
 
 import { createSlackController } from "./app/controller.js";
@@ -24,9 +25,7 @@ const POLL_INTERVAL_MS = 400;
 const HOST_ID = "slackoff-console-host";
 const ROOT_CLASS = "slackoff-console";
 const OVERLAY_Z_INDEX = "2147483647";
-const FAVICON_HREF =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234c8dff'/%3E%3Cpath d='M18 20h20c6 0 10 4 10 10s-4 10-10 10H29l-9 8v-8h-2V20zm10 8v5h12v-5H28z' fill='white'/%3E%3C/svg%3E";
-
+const FAVICON_HREF = `data:image/svg+xml,${encodeURIComponent(slothIcon)}`;
 
 /** Full-viewport host, isolated UI root, and active-state favicon. */
 class ConsoleOverlay {
@@ -95,16 +94,6 @@ export class ConsoleShell {
   #overlay: ConsoleOverlay | undefined;
   #controller: Controller | undefined;
 
-  /**
-   * The extension also binds this through chrome.commands. Chrome consumes a registered command key
-   * itself and does not deliver it to the page, so only one of the two paths ever fires per press.
-   */
-  readonly #onKeyDown = (event: KeyboardEvent): void => {
-    if (event.code !== "KeyO" || !event.shiftKey || event.ctrlKey) return;
-    if (!event.altKey && !event.metaKey) return;
-    event.preventDefault();
-    void this.toggleTakeover();
-  };
 
   constructor(platform: Platform) {
     this.#platform = platform;
@@ -116,7 +105,6 @@ export class ConsoleShell {
     this.#unsubscribeSettings = this.#platform.onSettingsChanged((settings) => {
       void this.#applySettings(settings);
     });
-    document.addEventListener("keydown", this.#onKeyDown, true);
     // Slack is a single-page app whose navigations are not observable from here.
     this.#pollTimer = window.setInterval(() => this.#tick(), POLL_INTERVAL_MS);
     this.#tick();
@@ -127,7 +115,6 @@ export class ConsoleShell {
     this.#pollTimer = undefined;
     this.#unsubscribeSettings?.();
     this.#unsubscribeSettings = undefined;
-    document.removeEventListener("keydown", this.#onKeyDown, true);
     this.#unmount();
   }
 

@@ -23,6 +23,12 @@ export class Composer {
   #counter = element("span", "composer__counter", { text: "0 / 2800" });
   #reason = element("span", "composer__reason");
   #sendButton = element("button", "primary-button composer__send", { type: "button", text: "Send" });
+  #stopButton = element("button", "icon-button composer__stop", {
+    type: "button",
+    text: "■",
+    ariaLabel: "Stop turn",
+    title: "Stop turn",
+  });
   #attachButton = element("button", "text-button composer__attach", { type: "button", text: "Add images" });
   #fileInput = element("input", "composer__file-input", {
     type: "file",
@@ -35,20 +41,23 @@ export class Composer {
   #images: QueuedImage[] = [];
   #sendText: (sessionId: string, text: string) => Promise<void>;
   #sendImages: (sessionId: string, text: string, images: readonly ImageUpload[]) => Promise<void>;
+  #stopTurn: (sessionId: string) => Promise<void>;
   #toast: (message: string, error?: boolean) => void;
   #sending = false;
 
   constructor(
     sendText: (sessionId: string, text: string) => Promise<void>,
     sendImages: (sessionId: string, text: string, images: readonly ImageUpload[]) => Promise<void>,
+    stopTurn: (sessionId: string) => Promise<void>,
     toast: (message: string, error?: boolean) => void,
   ) {
     this.#sendText = sendText;
     this.#sendImages = sendImages;
+    this.#stopTurn = stopTurn;
     this.#toast = toast;
     const frame = element("div", "composer__frame");
     const footer = element("div", "composer__footer");
-    footer.append(this.#attachButton, this.#reason, this.#counter, this.#sendButton);
+    footer.append(this.#attachButton, this.#reason, this.#counter, this.#stopButton, this.#sendButton);
     frame.append(this.#previews, this.textarea, footer);
     this.node.append(frame, this.#fileInput);
     this.#previews.hidden = true;
@@ -57,11 +66,6 @@ export class Composer {
       this.#resize();
       this.#updateCounter();
       this.#updateDisabled();
-    };
-    this.textarea.onkeydown = (event) => {
-      if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
-      event.preventDefault();
-      void this.submit();
     };
     this.textarea.onpaste = (event) => {
       const files = Array.from(event.clipboardData?.files ?? []);
@@ -105,6 +109,13 @@ export class Composer {
       this.#updateDisabled();
     };
     this.#sendButton.onclick = () => void this.submit();
+    this.#stopButton.onclick = () => {
+      const session = this.#session;
+      if (!session) return;
+      void this.#stopTurn(session.sessionId).catch((error: unknown) => {
+        this.#toast(error instanceof Error ? error.message : String(error), true);
+      });
+    };
   }
 
   update(session: SessionView | undefined): void {
@@ -113,26 +124,12 @@ export class Composer {
     const disabled = !session?.controllable;
     this.textarea.disabled = disabled || this.#sending;
     this.#attachButton.disabled = disabled || this.#sending;
+    this.#stopButton.disabled = session?.status !== "working" && session?.status !== "waiting";
     this.textarea.placeholder = disabled ? this.#disabledReason(session) : "Send an instruction…";
-    this.#reason.textContent = disabled
-      ? this.#disabledReason(session)
-      : "Enter to send · Drop or paste images · Shift+Enter for a new line";
+    this.#reason.textContent = disabled ? this.#disabledReason(session) : "Drop or paste images";
     this.#updateDisabled();
   }
 
-  focus(): void {
-    if (this.textarea.disabled) return;
-    this.textarea.focus();
-    this.textarea.setSelectionRange(this.textarea.value.length, this.textarea.value.length);
-  }
-
-  blur(): void {
-    this.textarea.blur();
-  }
-
-  isFocused(): boolean {
-    return this.textarea.matches(":focus");
-  }
 
   async submit(): Promise<void> {
     const session = this.#session;
@@ -180,7 +177,6 @@ export class Composer {
 
   destroy(): void {
     this.textarea.oninput = null;
-    this.textarea.onkeydown = null;
     this.textarea.onpaste = null;
     this.node.ondragover = null;
     this.node.ondragleave = null;
@@ -189,6 +185,7 @@ export class Composer {
     this.#fileInput.onchange = null;
     this.#previews.onclick = null;
     this.#sendButton.onclick = null;
+    this.#stopButton.onclick = null;
     this.#clearImages();
     this.node.remove();
   }

@@ -83,7 +83,7 @@ export function createExtensionPlatform(): Platform {
     },
 
     registerCommand(): void {
-      // chrome.commands already publishes the hotkey, and there is no other menu surface.
+      // Extension controls live in the toolbar and options page; there is no menu surface.
     },
   };
 }
