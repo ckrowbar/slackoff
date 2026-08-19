@@ -19,10 +19,15 @@ export const METADATA_VERSION = 1 as const;
 export const SESSION_METADATA_EVENT = "slackoff_session";
 export const TRANSCRIPT_METADATA_EVENT = "slackoff_transcript";
 export const QUESTION_METADATA_EVENT = "slackoff_question";
+export const BTW_METADATA_EVENT = "slackoff_btw";
+
 
 /** Lifecycle of a posted question, tracked so a reader knows whether input is still wanted. */
 export const QuestionMetadataStateSchema = z.enum(["waiting", "answered", "cancelled", "offline"]);
 export type QuestionMetadataState = z.infer<typeof QuestionMetadataStateSchema>;
+export const BtwMetadataStateSchema = z.enum(["working", "completed", "aborted", "error"]);
+export type BtwMetadataState = z.infer<typeof BtwMetadataStateSchema>;
+
 
 const JsonArrayString = <T>(schema: z.ZodType<T>) =>
   z.string().transform((raw, ctx): T => {
@@ -89,6 +94,16 @@ export const QuestionMetadataPayloadSchema = z.object({
   options: JsonArrayString(z.array(QuestionOptionPayloadSchema)),
 });
 export type QuestionMetadataPayload = z.infer<typeof QuestionMetadataPayloadSchema>;
+export const BtwMetadataPayloadSchema = z.object({
+  v: z.literal(METADATA_VERSION),
+  sessionId: z.string().min(1),
+  bindingId: z.string().min(1),
+  requestId: z.string().min(1),
+  question: z.string().min(1),
+  state: BtwMetadataStateSchema,
+});
+export type BtwMetadataPayload = z.infer<typeof BtwMetadataPayloadSchema>;
+
 
 /** Shape accepted by chat.postMessage and chat.update. */
 export interface MessageMetadata {
@@ -177,6 +192,21 @@ export function buildQuestionMetadata(input: QuestionMetadataInput): MessageMeta
     },
   };
 }
+export interface BtwMetadataInput {
+  sessionId: string;
+  bindingId: string;
+  requestId: string;
+  question: string;
+  state: BtwMetadataState;
+}
+
+export function buildBtwMetadata(input: BtwMetadataInput): MessageMetadata {
+  return {
+    event_type: BTW_METADATA_EVENT,
+    event_payload: { v: METADATA_VERSION, ...input },
+  };
+}
+
 
 /** Metadata as it comes back from conversations.history / conversations.replies. */
 const RawMetadataSchema = z.object({
@@ -187,7 +217,8 @@ const RawMetadataSchema = z.object({
 export type ParsedMetadata =
   | { kind: "session"; payload: SessionMetadataPayload }
   | { kind: "transcript"; payload: TranscriptMetadataPayload }
-  | { kind: "question"; payload: QuestionMetadataPayload };
+  | { kind: "question"; payload: QuestionMetadataPayload }
+  | { kind: "btw"; payload: BtwMetadataPayload };
 
 /**
  * Decode metadata from a Slack message. Returns undefined for foreign, absent, malformed, or
@@ -210,6 +241,10 @@ export function parseMessageMetadata(raw: unknown): ParsedMetadata | undefined {
     case QUESTION_METADATA_EVENT: {
       const parsed = QuestionMetadataPayloadSchema.safeParse(payload);
       return parsed.success ? { kind: "question", payload: parsed.data } : undefined;
+    }
+    case BTW_METADATA_EVENT: {
+      const parsed = BtwMetadataPayloadSchema.safeParse(payload);
+      return parsed.success ? { kind: "btw", payload: parsed.data } : undefined;
     }
     default:
       return undefined;

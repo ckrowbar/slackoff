@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildQuestionMetadata, buildSessionMetadata, buildTranscriptMetadata } from "../src/metadata.js";
+import { buildBtwMetadata, buildQuestionMetadata, buildSessionMetadata, buildTranscriptMetadata } from "../src/metadata.js";
 import {
   mergeSessions,
   parseSessionRoot,
@@ -481,6 +481,28 @@ const assistantReply = {
   metadata: null,
 };
 
+const btwReply = {
+  bot_id: "B07SLACKOFF",
+  ts: "1770000103.000450",
+  thread_ts: ROOT_TS,
+  text: "BTW Completed: What changed?",
+  blocks: [
+    { type: "section", text: { type: "mrkdwn", text: "*BTW · Completed*\nWhat changed?" } },
+    { type: "section", text: { type: "mrkdwn", text: "The parser now preserves `requestId`." } },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: "Side-channel response · Not saved to the OMP transcript" }],
+    },
+  ],
+  metadata: buildBtwMetadata({
+    sessionId: "019fec89ab12cd34ef",
+    bindingId: BINDING,
+    requestId: "btw-1",
+    question: "What changed?",
+    state: "completed",
+  }),
+};
+
 const notice = {
   bot_id: "B07SLACKOFF",
   ts: "1770000104.000500",
@@ -566,6 +588,11 @@ const threadCases: ThreadCase[] = [
     name: "assistant transcript chunk",
     message: assistantReply,
     expected: { kind: "assistant", text: "Patched src/api.ts & the tests" },
+  },
+  {
+    name: "BTW card stays distinct from assistant transcript",
+    message: btwReply,
+    expected: { kind: "btw", btwState: "completed", text: "What changed?\n\nThe parser now preserves `requestId`." },
   },
   {
     name: "plain-text daemon notice",

@@ -92,9 +92,14 @@ export class SlackoffDaemon {
     socket.on("close", () => {
       this.#connections.delete(socket);
       for (const record of this.#registry.disconnect(socket)) {
-        const update = record.pendingQuestion
-          ? this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, "offline")
-          : this.#slack.refreshRoot(record);
+        const update = (async () => {
+          await this.#slack.abortBtwRequests(record);
+          if (record.pendingQuestion) {
+            await this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, "offline");
+          } else {
+            await this.#slack.refreshRoot(record);
+          }
+        })();
         void update.catch((error) => console.error("Slackoff offline update failed", error));
       }
       this.#slack.scheduleHomeRefresh();
@@ -111,6 +116,7 @@ export class SlackoffDaemon {
           if (replacedSocket) {
             replacedSocket.write(encodeMessage({ type: "replaced", sessionId: message.session.id, reason: "lease" }));
           }
+          if (replacedSocket) await this.#slack.abortBtwRequests(record);
           if (replacedSocket && record.pendingQuestion) {
             await this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, "idle");
           }
@@ -130,6 +136,8 @@ export class SlackoffDaemon {
       }
       case "unregister": {
         const status = message.reason === "disabled" ? "disabled" : "offline";
+        const active = this.#registry.getBySessionId(message.sessionId);
+        if (active?.socket === socket) await this.#slack.abortBtwRequests(active);
         const record = this.#registry.unregister(message.sessionId, socket, status);
         if (record?.pendingQuestion) await this.#slack.cancelQuestion(record, record.pendingQuestion.questionId, status);
         else if (record) await this.#slack.refreshRoot(record);
@@ -164,6 +172,24 @@ export class SlackoffDaemon {
         const record = this.#registry.getBySessionId(message.sessionId);
         if (!record || record.socket !== socket) return;
         await this.#slack.postTranscript(record, message.role, message.text);
+        return;
+      }
+      case "btw_start": {
+        const record = this.#registry.getBySessionId(message.sessionId);
+        if (!record || record.socket !== socket) return;
+        await this.#slack.postBtwStart(record, message.requestId, message.question);
+        return;
+      }
+      case "btw_update": {
+        const record = this.#registry.getBySessionId(message.sessionId);
+        if (!record || record.socket !== socket) return;
+        this.#slack.postBtwUpdate(record, message.requestId, message.delta);
+        return;
+      }
+      case "btw_end": {
+        const record = this.#registry.getBySessionId(message.sessionId);
+        if (!record || record.socket !== socket) return;
+        await this.#slack.postBtwEnd(record, message);
         return;
       }
       case "command_ack": {

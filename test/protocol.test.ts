@@ -189,3 +189,41 @@ test("accepts a native thread reply as a question answer", () => {
 
   assert.equal(result.success, true);
 });
+
+test("accepts the BTW lifecycle protocol and rejects incomplete identities", () => {
+  const lifecycle = [
+    {
+      type: "btw_start",
+      sessionId: "session-1",
+      requestId: "btw-1",
+      question: "What changed?",
+    },
+    {
+      type: "btw_update",
+      sessionId: "session-1",
+      requestId: "btw-1",
+      delta: "The parser ",
+    },
+    {
+      type: "btw_end",
+      sessionId: "session-1",
+      requestId: "btw-1",
+      question: "What changed?",
+      outcome: "completed",
+      answer: "The parser was fixed.",
+    },
+  ];
+
+  for (const message of lifecycle) assert.equal(ClientMessageSchema.safeParse(message).success, true);
+  assert.equal(ClientMessageSchema.safeParse({ ...lifecycle[0], requestId: "" }).success, false);
+  assert.equal(ClientMessageSchema.safeParse({ ...lifecycle[2], outcome: "cancelled" }).success, false);
+  assert.equal(ClientMessageSchema.safeParse({ ...lifecycle[2], answer: undefined }).success, false);
+  assert.equal(
+    ClientMessageSchema.safeParse({
+      ...lifecycle[2],
+      outcome: "aborted",
+      answer: undefined,
+    }).success,
+    true,
+  );
+});

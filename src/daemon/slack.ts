@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import type { DaemonConfig } from "../config.js";
 import {
+  buildBtwMetadata,
   buildQuestionMetadata,
   buildSessionMetadata,
   buildTranscriptMetadata,
@@ -60,7 +61,15 @@ import {
 import { parseThreadCommand } from "./commands.js";
 import { downloadSlackImages } from "./images.js";
 import { TmuxAttachmentTracker, TmuxLauncher } from "./launcher.js";
-import type { ActiveSession } from "./registry.js";
+import {
+  abortBtwRequests as abortActiveBtwRequests,
+  appendBtwDelta,
+  completeBtwRequest,
+  finishBtwRequest,
+  startBtwRequest,
+  type ActiveSession,
+  type BtwRequest,
+} from "./registry.js";
 import { SessionRegistry } from "./registry.js";
 
 const DmMessageSchema = z.object({
@@ -138,6 +147,8 @@ export class SlackController {
   readonly #launcher: TmuxLauncher;
   readonly #seenEvents = new Map<string, number>();
   readonly #rootRefreshTimers = new Map<string, NodeJS.Timeout>();
+  readonly #btwUpdateTimers = new Map<string, NodeJS.Timeout>();
+  readonly #btwUpdateChains = new Map<string, Promise<void>>();
   readonly #closedBindings = new Set<string>();
   readonly #threadPermalinks = new Map<string, string>();
   readonly #tmuxAttachments = new TmuxAttachmentTracker();
@@ -177,6 +188,10 @@ export class SlackController {
   async stop(): Promise<void> {
     for (const timer of this.#rootRefreshTimers.values()) clearTimeout(timer);
     this.#rootRefreshTimers.clear();
+    for (const timer of this.#btwUpdateTimers.values()) clearTimeout(timer);
+    this.#btwUpdateTimers.clear();
+    await Promise.allSettled(this.#btwUpdateChains.values());
+    this.#btwUpdateChains.clear();
     clearTimeout(this.#homeRefreshTimer);
     this.#homeRefreshTimer = undefined;
     await this.#app.stop();
@@ -364,6 +379,124 @@ export class SlackController {
       }
     }
   }
+  async postBtwStart(record: ActiveSession, requestId: string, question: string): Promise<void> {
+    const request = startBtwRequest(record, requestId, question);
+    if (!request) return;
+
+    try {
+      const result = await this.#app.client.chat.postMessage({
+        channel: request.channelId,
+        thread_ts: request.threadTs,
+        text: buildBtwText(request),
+        blocks: buildBtwBlocks(request),
+        metadata: this.#btwMetadata(record, request),
+      });
+      if (!result.ts) throw new Error("Slack did not return a BTW message timestamp");
+      request.messageTs = result.ts;
+      if (request.outcome) await this.#settleTerminalBtwRequest(record, request);
+    } catch (error) {
+      if (!request.messageTs) {
+        if (request.outcome) completeBtwRequest(record, request);
+        else record.btwRequests.delete(requestId);
+      }
+      throw error;
+    }
+  }
+
+  postBtwUpdate(record: ActiveSession, requestId: string, delta: string): void {
+    const request = appendBtwDelta(record, requestId, delta);
+    if (!request?.messageTs) return;
+    const key = this.#btwTimerKey(record.session.id, requestId);
+    if (this.#btwUpdateTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      this.#btwUpdateTimers.delete(key);
+      const currentRecord = this.#registry.getBySessionId(record.session.id);
+      const currentRequest = currentRecord?.btwRequests.get(requestId);
+      if (!currentRecord || !currentRequest?.messageTs || currentRequest.outcome) return;
+      void this.#queueBtwCardUpdate(currentRecord, currentRequest).catch((error) =>
+        console.error("OMP BTW update failed", error),
+      );
+    }, 350);
+    timer.unref();
+    this.#btwUpdateTimers.set(key, timer);
+  }
+
+  async postBtwEnd(
+    record: ActiveSession,
+    end: {
+      requestId: string;
+      question: string;
+      outcome: "completed" | "aborted" | "error";
+      answer?: string | undefined;
+      error?: string | undefined;
+    },
+  ): Promise<void> {
+    const request = finishBtwRequest(record, end.requestId, end);
+    if (!request) return;
+    this.#clearBtwTimer(record.session.id, end.requestId);
+    await this.#settleTerminalBtwRequest(record, request);
+  }
+
+  async abortBtwRequests(record: ActiveSession): Promise<void> {
+    const aborted = abortActiveBtwRequests(record);
+    await Promise.all(
+      aborted.map(async (request) => {
+        this.#clearBtwTimer(record.session.id, request.requestId);
+        await this.#settleTerminalBtwRequest(record, request);
+      }),
+    );
+  }
+  async #settleTerminalBtwRequest(record: ActiveSession, request: BtwRequest): Promise<void> {
+    if (!request.messageTs) return;
+    try {
+      await this.#queueBtwCardUpdate(record, request);
+    } finally {
+      completeBtwRequest(record, request);
+    }
+  }
+
+  #queueBtwCardUpdate(record: ActiveSession, request: BtwRequest): Promise<void> {
+    const key = this.#btwTimerKey(record.session.id, request.requestId);
+    const prior = this.#btwUpdateChains.get(key) ?? Promise.resolve();
+    const update = prior.catch(() => undefined).then(() => this.#updateBtwCard(record, request));
+    this.#btwUpdateChains.set(key, update);
+    return update.finally(() => {
+      if (this.#btwUpdateChains.get(key) === update) this.#btwUpdateChains.delete(key);
+    });
+  }
+
+
+  async #updateBtwCard(record: ActiveSession, request: BtwRequest): Promise<void> {
+    if (!request.messageTs) return;
+    await this.#app.client.chat.update({
+      channel: request.channelId,
+      ts: request.messageTs,
+      text: buildBtwText(request),
+      blocks: buildBtwBlocks(request),
+      metadata: this.#btwMetadata(record, request),
+    });
+  }
+
+  #btwMetadata(record: ActiveSession, request: BtwRequest): MessageMetadata {
+    return buildBtwMetadata({
+      sessionId: record.session.id,
+      bindingId: request.bindingId,
+      requestId: request.requestId,
+      question: clipBtwText(request.question, 2_000),
+      state: request.outcome ?? "working",
+    });
+  }
+
+  #btwTimerKey(sessionId: string, requestId: string): string {
+    return `${sessionId.length}:${sessionId}${requestId}`;
+  }
+
+  #clearBtwTimer(sessionId: string, requestId: string): void {
+    const key = this.#btwTimerKey(sessionId, requestId);
+    clearTimeout(this.#btwUpdateTimers.get(key));
+    this.#btwUpdateTimers.delete(key);
+  }
+
 
 
   async postQuestion(record: ActiveSession, question: QuestionRequest): Promise<void> {
@@ -899,6 +1032,7 @@ export class SlackController {
   }
 
   async closeSession(record: ActiveSession, notifyClient = true): Promise<void> {
+    await this.abortBtwRequests(record);
     record.collapsed = true;
     record.status = "disabled";
     record.activity = undefined;
@@ -941,6 +1075,54 @@ export class SlackController {
     return false;
   }
 }
+type BtwState = "working" | "completed" | "aborted" | "error";
+
+const BTW_STATE_LABEL: Record<BtwState, string> = {
+  working: "Working",
+  completed: "Completed",
+  aborted: "Aborted",
+  error: "Error",
+};
+
+export function buildBtwText(request: BtwRequest): string {
+  const state = request.outcome ?? "working";
+  const detail = request.outcome === "error" ? request.error : request.answer;
+  return clipBtwText(`BTW ${BTW_STATE_LABEL[state]}: ${request.question}${detail ? `\n${detail}` : ""}`, 3_000);
+}
+
+export function buildBtwBlocks(request: BtwRequest): KnownBlock[] {
+  const state = request.outcome ?? "working";
+  const detail =
+    state === "error"
+      ? `*Error:* ${escapeMrkdwn(clipBtwText(request.error ?? "Unknown error", 2_700))}`
+      : request.answer
+        ? escapeMrkdwn(clipBtwText(request.answer, 2_800))
+        : state === "working"
+          ? "_Waiting for a response…_"
+          : state === "aborted"
+            ? "_No response was returned._"
+            : "_The response was empty._";
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*BTW · ${BTW_STATE_LABEL[state]}*\n${escapeMrkdwn(clipBtwText(request.question, 2_800))}`,
+      },
+    },
+    { type: "section", text: { type: "mrkdwn", text: detail } },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: "Side-channel response · Not saved to the OMP transcript" }],
+    },
+  ];
+}
+
+function clipBtwText(text: string, maximum: number): string {
+  if (text.length <= maximum) return text;
+  return `${text.slice(0, maximum - 1)}…`;
+}
+
 
 type QuestionState = "waiting" | "answered" | "cancelled";
 

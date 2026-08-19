@@ -444,6 +444,17 @@ export function parseThreadMessage(message: unknown): ThreadEvent {
       text: readable(stripped).trim(),
     };
   }
+  if (metadata?.kind === "btw") {
+    const body = readable(textOf(sections[1]?.text)).trim();
+    return {
+      ts: raw.ts,
+      at,
+      kind: "btw",
+      btwState: metadata.payload.state,
+      text: body ? `${metadata.payload.question}\n\n${body}` : metadata.payload.question,
+    };
+  }
+
 
   const sectionText = textOf(sections[0]?.text);
   if (sectionText.startsWith(USER_BLOCK_PREFIX)) {

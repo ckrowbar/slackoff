@@ -2,14 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildBtwMetadata,
   buildQuestionMetadata,
   buildSessionMetadata,
   buildTranscriptMetadata,
   METADATA_VERSION,
   parseMessageMetadata,
+  BTW_METADATA_EVENT,
   QUESTION_METADATA_EVENT,
   SESSION_METADATA_EVENT,
   TRANSCRIPT_METADATA_EVENT,
+  BtwMetadataStateSchema,
   type MessageMetadata,
 } from "../src/metadata.js";
 
@@ -52,6 +55,14 @@ const questionMetadata = buildQuestionMetadata({
   options: questionOptions,
 });
 
+const btwMetadata = buildBtwMetadata({
+  sessionId: "session-123456789",
+  bindingId: "binding-1",
+  requestId: "btw-1",
+  question: "What changed?",
+  state: "completed",
+});
+
 function assertFlatPrimitives(metadata: MessageMetadata): void {
   assert.match(metadata.event_type, /^[a-z0-9_]+$/);
   for (const [key, value] of Object.entries(metadata.event_payload)) {
@@ -64,12 +75,13 @@ function assertFlatPrimitives(metadata: MessageMetadata): void {
 }
 
 test("every builder emits a flat primitive payload Slack will accept", () => {
-  for (const metadata of [sessionMetadata, transcriptMetadata, questionMetadata]) {
+  for (const metadata of [sessionMetadata, transcriptMetadata, questionMetadata, btwMetadata]) {
     assertFlatPrimitives(metadata);
   }
   assert.equal(sessionMetadata.event_type, SESSION_METADATA_EVENT);
   assert.equal(transcriptMetadata.event_type, TRANSCRIPT_METADATA_EVENT);
   assert.equal(questionMetadata.event_type, QUESTION_METADATA_EVENT);
+  assert.equal(btwMetadata.event_type, BTW_METADATA_EVENT);
 });
 
 test("session metadata round-trips with the model list decoded", () => {
@@ -147,6 +159,20 @@ test("question metadata round-trips options with optional descriptions", () => {
     state: "waiting",
     options: questionOptions,
   });
+});
+
+test("BTW metadata is distinct from persisted assistant transcript metadata", () => {
+  const parsed = parseMessageMetadata(btwMetadata);
+  assert.ok(parsed && parsed.kind === "btw");
+  assert.deepEqual(parsed.payload, {
+    v: METADATA_VERSION,
+    sessionId: "session-123456789",
+    bindingId: "binding-1",
+    requestId: "btw-1",
+    question: "What changed?",
+    state: "completed",
+  });
+  assert.equal(BtwMetadataStateSchema.safeParse("waiting").success, false);
 });
 
 test("unreadable metadata falls back to undefined instead of throwing", () => {

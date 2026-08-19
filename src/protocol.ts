@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 5 as const;
+export const PROTOCOL_VERSION = 6 as const;
 
 export const SessionStatusSchema = z.enum([
   "idle",
@@ -98,6 +98,38 @@ const TranscriptMessageSchema = z.object({
   text: z.string().min(1),
   messageId: z.string().optional(),
 });
+const BtwStartMessageSchema = z.object({
+  type: z.literal("btw_start"),
+  sessionId: z.string().min(1),
+  requestId: z.string().min(1),
+  question: z.string().min(1),
+});
+
+const BtwUpdateMessageSchema = z.object({
+  type: z.literal("btw_update"),
+  sessionId: z.string().min(1),
+  requestId: z.string().min(1),
+  delta: z.string(),
+});
+
+const BtwEndMessageSchema = z
+  .object({
+    type: z.literal("btw_end"),
+    sessionId: z.string().min(1),
+    requestId: z.string().min(1),
+    question: z.string().min(1),
+    outcome: z.enum(["completed", "aborted", "error"]),
+    answer: z.string().optional(),
+    error: z.string().optional(),
+  })
+  .superRefine((message, ctx) => {
+    const valid =
+      (message.outcome === "completed" && message.answer !== undefined && message.error === undefined) ||
+      (message.outcome === "error" && message.error !== undefined && message.answer === undefined) ||
+      (message.outcome === "aborted" && message.answer === undefined && message.error === undefined);
+    if (!valid) ctx.addIssue({ code: "custom", message: `Invalid ${message.outcome} BTW result` });
+  });
+
 
 const CommandAcknowledgementSchema = z.object({
   type: z.literal("command_ack"),
@@ -140,6 +172,9 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   SessionTitleMessageSchema,
   ModelStateMessageSchema,
   TranscriptMessageSchema,
+  BtwStartMessageSchema,
+  BtwUpdateMessageSchema,
+  BtwEndMessageSchema,
   CommandAcknowledgementSchema,
   QuestionRequestSchema,
   CancelQuestionMessageSchema,
@@ -152,6 +187,9 @@ export type StatusMessage = z.infer<typeof StatusMessageSchema>;
 export type SessionTitleMessage = z.infer<typeof SessionTitleMessageSchema>;
 export type ModelStateMessage = z.infer<typeof ModelStateMessageSchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
+export type BtwStartMessage = z.infer<typeof BtwStartMessageSchema>;
+export type BtwUpdateMessage = z.infer<typeof BtwUpdateMessageSchema>;
+export type BtwEndMessage = z.infer<typeof BtwEndMessageSchema>;
 export type CommandAcknowledgement = z.infer<typeof CommandAcknowledgementSchema>;
 export type QuestionRequest = z.infer<typeof QuestionRequestSchema>;
 export type CancelQuestionMessage = z.infer<typeof CancelQuestionMessageSchema>;

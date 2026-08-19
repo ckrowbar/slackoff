@@ -1,4 +1,5 @@
 import type { ModelEffort, SessionStatus } from "../../src/protocol.js";
+import type { BtwMetadataState } from "../../src/metadata.js";
 export type { ModelEffort };
 import type { SupportedImageMimeType } from "../../src/image-inputs.js";
 import type { SessionLaunchRequest } from "../../src/session-launch.js";
@@ -77,6 +78,7 @@ export interface SessionView {
 export type ThreadEventKind =
   | "user"
   | "assistant"
+  | "btw"
   | "question"
   | "answered"
   | "cancelled"
@@ -89,6 +91,8 @@ export interface ThreadEvent {
   at: number;
   kind: ThreadEventKind;
   text: string;
+  /** Lifecycle state for a BTW side-channel card. */
+  btwState?: BtwMetadataState;
   /** Populated for question events. */
   question?: PendingQuestion;
   /** Set when this event is a local optimistic echo not yet confirmed by Slack. */

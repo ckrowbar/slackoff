@@ -9,6 +9,13 @@ interface CachedEvent {
 const INLINE_PATTERN =
   /(`[^`\n]+`|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*\n]+)\*\*|~~([^~\n]+)~~|\*([^*\n]+)\*|https?:\/\/[^\s<]+)/g;
 
+const BTW_LABEL_BY_STATE: Record<NonNullable<ThreadEvent["btwState"]>, string> = {
+  working: "Working",
+  completed: "Completed",
+  aborted: "Aborted",
+  error: "Error",
+};
+
 function appendInline(parent: HTMLElement, text: string, allowLinks = true): void {
   let offset = 0;
   for (const match of text.matchAll(INLINE_PATTERN)) {
@@ -273,7 +280,7 @@ export class TranscriptView {
   }
 
   #eventNode(event: ThreadEvent): HTMLElement {
-    const signature = `${event.kind}\u0000${event.text}\u0000${event.pending ? "p" : ""}\u0000${event.failed ?? ""}`;
+    const signature = `${event.kind}\u0000${event.btwState ?? ""}\u0000${event.text}\u0000${event.pending ? "p" : ""}\u0000${event.failed ?? ""}`;
     this.#eventTexts.set(event.ts, event.text);
     const cached = this.#events.get(event.ts);
     if (cached?.signature === signature) return cached.node;
@@ -288,7 +295,16 @@ export class TranscriptView {
       node.append(element("span", "transcript-event__notice-mark", { text: "—" }));
       appendRichText(node, event.text);
     } else {
-      const label = event.kind === "user" ? "You" : event.kind === "assistant" ? "Agent" : event.kind === "question" ? "Question" : event.kind;
+      const label =
+        event.kind === "user"
+          ? "You"
+          : event.kind === "assistant"
+            ? "Agent"
+            : event.kind === "btw"
+              ? `BTW · ${event.btwState ? BTW_LABEL_BY_STATE[event.btwState] : "Side channel"}`
+              : event.kind === "question"
+                ? "Question"
+                : event.kind;
       const header = element("header", "transcript-event__header");
       header.append(
         element("span", "transcript-event__label", { text: label }),

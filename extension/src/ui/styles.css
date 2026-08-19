@@ -600,6 +600,12 @@
 }
 
 .slackoff-console .transcript-event--assistant { padding: 0 var(--so-space-4); }
+.slackoff-console .transcript-event--btw {
+  padding: var(--so-space-3) var(--so-space-4);
+  background: var(--so-amber-soft);
+  border-left: 2px solid var(--so-amber);
+  border-radius: 0 var(--so-radius) var(--so-radius) 0;
+}
 .slackoff-console .transcript-event--question { padding: var(--so-space-3) var(--so-space-4); border-left: 2px solid var(--so-amber); }
 .slackoff-console .transcript-event--answered,
 .slackoff-console .transcript-event--cancelled,

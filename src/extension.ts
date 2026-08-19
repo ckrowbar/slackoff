@@ -11,6 +11,7 @@ import {
   ModelEffortSchema,
   PROTOCOL_VERSION,
   SlackBindingSchema,
+  type ClientMessage,
   type ModelDescriptor,
   type ModelEffort,
   type ServerMessage,
@@ -51,6 +52,41 @@ interface PendingSlackAnswer {
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 }
+export type BtwLifecycleEvent =
+  | { type: "btw_start"; requestId: string; question: string }
+  | { type: "btw_update"; requestId: string; delta: string }
+  | {
+      type: "btw_end";
+      requestId: string;
+      question: string;
+      outcome: "completed" | "aborted" | "error";
+      answer?: string | undefined;
+      error?: string | undefined;
+    };
+
+interface BtwEventAPI {
+  on(event: "btw_start", handler: (event: Extract<BtwLifecycleEvent, { type: "btw_start" }>) => void): void;
+  on(event: "btw_update", handler: (event: Extract<BtwLifecycleEvent, { type: "btw_update" }>) => void): void;
+  on(event: "btw_end", handler: (event: Extract<BtwLifecycleEvent, { type: "btw_end" }>) => void): void;
+}
+
+export function forwardBtwLifecycleEvent(
+  event: BtwLifecycleEvent,
+  registration: { enabled: boolean; sessionId?: string | undefined },
+  send: (message: ClientMessage) => boolean,
+): boolean {
+  if (!registration.enabled || !registration.sessionId) return false;
+  const sessionId = registration.sessionId;
+  switch (event.type) {
+    case "btw_start":
+      return send({ ...event, sessionId });
+    case "btw_update":
+      return send({ ...event, sessionId });
+    case "btw_end":
+      return send({ ...event, sessionId });
+  }
+}
+
 
 export default function slackoffExtension(pi: ExtensionAPI): void {
   const slackAskParameters = pi.zod.object({
@@ -95,7 +131,10 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     if (client) return client;
     client = new BridgeClient(loadClientConfig(), reportError);
     client.onMessage((message) => handleServerMessage(message));
-    client.onDisconnect((error) => rejectPendingAnswers(error));
+    client.onDisconnect((error) => {
+      registeredSessionId = undefined;
+      rejectPendingAnswers(error);
+    });
     return client;
   };
 
@@ -533,6 +572,18 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     if (!currentState.enabled || event.source === "extension" || !registeredSessionId || !event.text.trim()) return;
     getClient().send({ type: "transcript", sessionId: registeredSessionId, role: "user", text: event.text.trim() });
   });
+  const btwEvents = pi as unknown as BtwEventAPI;
+  const forwardBtwEvent = (event: BtwLifecycleEvent): void => {
+    forwardBtwLifecycleEvent(
+      event,
+      { enabled: currentState.enabled, sessionId: registeredSessionId },
+      (message) => getClient().send(message),
+    );
+  };
+  btwEvents.on("btw_start", forwardBtwEvent);
+  btwEvents.on("btw_update", forwardBtwEvent);
+  btwEvents.on("btw_end", forwardBtwEvent);
+
 
   pi.on("agent_start", () => sendStatus("working", "Starting"));
   pi.on("turn_start", () => sendStatus("working", "Thinking"));

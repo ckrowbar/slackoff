@@ -33,6 +33,10 @@ const accepted: Array<{ input: string; expected: ThreadCommand }> = [
     input: "!omp model openai-codex/gpt-5.6-sol",
     expected: { kind: "omp", command: "/model openai-codex/gpt-5.6-sol" },
   },
+  {
+    input: "!omp btw what files changed?",
+    expected: { kind: "omp", command: "/btw what files changed?" },
+  },
 ];
 
 const rejected = [

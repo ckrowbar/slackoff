@@ -120,6 +120,7 @@ In Slack, reply in the session thread with a normal instruction or use a control
 | `!stop` | Abort the active OMP turn |
 | `!model <provider>/<id>` | Switch the session model |
 | `!omp <command> [arguments]` | Run a supported OMP slash command without the leading slash |
+| `!omp btw <question>` | Ask a non-persistent OMP side-channel question |
 | `!close` | Close the Slack thread's session binding |
 
 Examples:
@@ -128,9 +129,15 @@ Examples:
 !model anthropic/claude-sonnet-4-5
 !omp compact
 !omp skill:review the current diff
+!omp btw what files changed?
 ```
 
 Interactive buttons provide the same stop, model, question-answer, and close operations. Multi-line messages and text that does not exactly match a control are delivered to OMP as normal instructions.
+
+`!omp btw <question>` uses OMP's existing `/btw` command. Slackoff mirrors its lifecycle into one
+distinct card in the session thread; it does not run a second inference. The BTW question and answer
+are not sent as normal instructions, are not persisted in the assistant transcript, and do not
+change the session's main status.
 
 ### App Home
 
