@@ -332,6 +332,7 @@ export function parseSessionRoot(message: unknown, channelId: string): SessionVi
     card?.status ??
     (collapsed ? "disabled" : "idle");
   const activity = payload ? payload.activity : (card?.activity ?? "");
+  const connected = payload?.connected ?? (!collapsed && status !== "offline" && status !== "disabled");
 
   const models: ModelOption[] = payload
     ? payload.models.map((model) => ({ ...model, selector: `${model.provider}/${model.id}` }))
@@ -359,6 +360,7 @@ export function parseSessionRoot(message: unknown, channelId: string): SessionVi
     models,
     efforts,
     collapsed,
+    connected,
     startedAt: tsToMillis(raw.ts),
     updatedAt: tsToMillis(raw.latest_reply ?? raw.ts),
     unread: 0,

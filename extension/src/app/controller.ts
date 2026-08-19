@@ -345,7 +345,7 @@ class SlackController implements Controller {
         now: () => this.#deps.now(),
         selectedSessionId: this.#selected,
       });
-      this.#sessions = merged.filter((session) => !session.collapsed);
+      this.#sessions = merged.filter((session) => session.connected && !session.collapsed);
       if (this.#selected && !this.#sessions.some((session) => session.sessionId === this.#selected)) {
         this.#selected = undefined;
         this.#thread = undefined;

@@ -160,10 +160,13 @@ Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**,
 ### Tampermonkey userscript
 
 ```sh
-npm run build:userscript
+npm run install:userscript
 ```
 
-Create a Tampermonkey script from `extension/dist/slackoff-console.user.js`. Open the Slackoff direct message after installation. Use `Alt+Shift+O` on Linux/Windows or `Command+Shift+O` on macOS to toggle the console.
+The command opens a local page. Select **Install or update Slackoff Console** to fetch and build the
+latest revision from your current upstream branch, then confirm the change in Tampermonkey. Keep the
+command running until Tampermonkey finishes. Open the Slackoff direct message after installation.
+Use `Alt+Shift+O` on Linux or Windows, or `Command+Shift+O` on macOS, to toggle the console.
 
 See [`extension/README.md`](extension/README.md) for console controls, keyboard shortcuts, security behavior, and known Slack DOM fallbacks.
 

@@ -84,6 +84,7 @@ function session(
     models: MODELS,
     efforts: EFFORTS,
     collapsed: false,
+    connected: true,
     startedAt: NOW - (90 + updatedMinutes) * minute,
     updatedAt: NOW - updatedMinutes * minute,
     unread: 0,

@@ -26,6 +26,7 @@ const sessionMetadata = buildSessionMetadata({
   status: "working",
   activity: "Editing src/parser.ts",
   collapsed: false,
+  connected: true,
   model: models[0],
   models,
   effort: "high",
@@ -83,11 +84,19 @@ test("session metadata round-trips with the model list decoded", () => {
     status: "working",
     activity: "Editing src/parser.ts",
     collapsed: false,
+    connected: true,
     model: "openai-codex/gpt-5.6-sol",
     effort: "high",
     efforts: ["off", "low", "medium", "high"],
     models,
   });
+});
+
+test("session metadata remains compatible with cards written before connected state", () => {
+  const { connected: _connected, ...event_payload } = sessionMetadata.event_payload;
+  const parsed = parseMessageMetadata({ event_type: SESSION_METADATA_EVENT, event_payload });
+  assert.ok(parsed && parsed.kind === "session");
+  assert.equal(parsed.payload.connected, undefined);
 });
 
 test("session metadata keeps an absent model and empty activity distinguishable", () => {
@@ -100,6 +109,7 @@ test("session metadata keeps an absent model and empty activity distinguishable"
       status: "disabled",
       activity: undefined,
       collapsed: true,
+      connected: false,
       model: undefined,
       models: [],
     }),
@@ -108,6 +118,7 @@ test("session metadata keeps an absent model and empty activity distinguishable"
   assert.equal(parsed.payload.model, "");
   assert.equal(parsed.payload.activity, "");
   assert.equal(parsed.payload.collapsed, true);
+  assert.equal(parsed.payload.connected, false);
   assert.deepEqual(parsed.payload.models, []);
 });
 

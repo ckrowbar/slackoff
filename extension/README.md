@@ -15,14 +15,16 @@ Use this when policy forbids loading unpacked extensions. Tampermonkey needs **A
 enabled on its own `chrome://extensions` details page; Chrome 138 and later replaced the old
 developer-mode requirement with that per-extension toggle.
 
-1. `npm install && npm run build:userscript`, which emits
-   `extension/dist/slackoff-console.user.js`.
-2. Open the Tampermonkey dashboard and create a new script.
-3. Replace the template with the contents of `extension/dist/slackoff-console.user.js`, then save.
+1. Run `npm install && npm run install:userscript`.
+2. Select **Install or update Slackoff Console** on the local page.
+3. Confirm the change in Tampermonkey.
 
-The userscript is only a Slack Web UI enhancement. After installation it runs entirely in the
-signed-in Slack tab; it does not require a local server, tunnel, companion extension, or separate
-authentication.
+The installer fetches and builds the latest revision from your current upstream branch. Set
+`SLACKOFF_USERSCRIPT_UPSTREAM=origin/main` to use another remote branch. Keep the command running
+until Tampermonkey finishes.
+
+The userscript runs entirely in the signed-in Slack tab after installation. It does not need a local
+server, tunnel, companion extension or separate authentication.
 
 ## Install as an extension
 

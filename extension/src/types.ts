@@ -61,6 +61,8 @@ export interface SessionView {
   efforts: ModelEffort[];
   /** Closed threads render as a single collapsed row and accept no input. */
   collapsed: boolean;
+  /** True when the daemon currently has a live IPC connection for this session. */
+  connected: boolean;
   /** Epoch ms of the root card, i.e. when the session bound to Slack. */
   startedAt: number;
   /** Epoch ms of the newest thread activity we have seen. */

@@ -54,6 +54,8 @@ export const SessionMetadataPayloadSchema = z.object({
   status: z.string().min(1),
   activity: z.string().default(""),
   collapsed: z.boolean(),
+  /** Whether the daemon currently has a live IPC connection for this session. */
+  connected: z.boolean().optional(),
   /** Current model selector, "provider/id", or "" when unknown. */
   model: z.string().default(""),
   /** Current model effort, when the selected model exposes a controllable effort surface. */
@@ -102,6 +104,7 @@ export interface SessionMetadataInput {
   status: SessionStatus;
   activity?: string | undefined;
   collapsed: boolean;
+  connected: boolean;
   model?: ModelDescriptor | undefined;
   models: readonly ModelDescriptor[];
   efforts?: readonly ModelEffort[] | undefined;
@@ -120,6 +123,7 @@ export function buildSessionMetadata(input: SessionMetadataInput): MessageMetada
       status: input.status,
       activity: input.activity ?? "",
       collapsed: input.collapsed,
+      connected: input.connected,
       model: input.model ? `${input.model.provider}/${input.model.id}` : "",
       ...(input.effort ? { effort: input.effort } : {}),
       models: JSON.stringify(

@@ -23,6 +23,7 @@ interface CardInput {
   activity?: string;
   title?: string;
   collapsed?: boolean;
+  connected?: boolean;
   latestReply?: string;
 }
 
@@ -58,6 +59,7 @@ function rootCard(input: CardInput = {}): unknown {
       status,
       activity: input.activity ?? "",
       collapsed: input.collapsed ?? false,
+      connected: input.connected ?? true,
       model: SOL,
       models: [SOL],
       effort: "high",
@@ -552,6 +554,29 @@ test("closed sessions are omitted and refuse input as unknown", async () => {
   await assert.rejects(controller.sendInstruction(SESSION_ID, "ship it"), /Unknown session/);
   await assert.rejects(controller.stopTurn(SESSION_ID), /Unknown session/);
   assert.equal(h.calls.some((entry) => entry.method === POST), false);
+  controller.stop();
+});
+
+test("sidebar removes a session when the daemon reports it disconnected", async () => {
+  const h = harness();
+  h.respond(
+    HISTORY,
+    { ok: true, messages: [rootCard()] },
+    { ok: true, messages: [rootCard({ status: "offline", connected: false })] },
+  );
+  h.respond(REPLIES, { ok: true, messages: [rootCard()] });
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+  controller.select(SESSION_ID);
+  await h.settle();
+  assert.equal(controller.getState().sessions.length, 1);
+
+  await h.fire(5_000);
+
+  assert.equal(controller.getState().sessions.length, 0);
+  assert.equal(controller.getState().selectedSessionId, undefined);
+  assert.equal(controller.getState().thread, undefined);
   controller.stop();
 });
 
