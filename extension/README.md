@@ -95,6 +95,12 @@ Only the resolved DM channel id and your preferences persist. The extension uses
 `chrome.storage.local`. The userscript uses the single `GM_setValue` key
 `slackoff-console:settings`.
 
+## Icon assets
+
+`icons/sloth.svg` is the source artwork for the extension, takeover favicon, and userscript icon.
+Chrome uses the generated `sloth-16.png`, `sloth-32.png`, `sloth-48.png`, and `sloth-128.png`
+variants. Regenerate all four PNGs at their named dimensions whenever the SVG changes.
+
 ## Development
 
 ```
