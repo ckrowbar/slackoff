@@ -64,8 +64,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   const themeToggle = element("button", "icon-button theme-toggle", { type: "button" });
   const topbarActions = element("div", "topbar__actions");
   topbarActions.append(newSessionButton, themeToggle);
-  const count = element("span", "topbar__count");
-  topbar.append(brand, filters, searchWrap, topbarActions, count);
+  topbar.append(brand, filters, searchWrap, topbarActions);
 
   const body = element("div", "console-body");
   const rail = element("aside", "rail");
@@ -232,7 +231,6 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
     connectionDot.title = connectionTitle;
     connectionDot.setAttribute("aria-label", connectionTitle);
     workspace.textContent = state.connection.phase === "ready" ? state.connection.team : "Slackoff Console";
-    count.textContent = `${visibleSessions.length} session${visibleSessions.length === 1 ? "" : "s"}`;
     railCount.textContent = `${visibleSessions.length} open`;
     for (const [filter, button] of filterButtons) {
       const active = filter === state.filter;

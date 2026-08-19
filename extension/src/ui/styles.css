@@ -160,7 +160,7 @@
 .slackoff-console .topbar {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto minmax(160px, 280px) auto auto;
+  grid-template-columns: minmax(160px, 1fr) auto minmax(160px, 280px) auto;
   align-items: center;
   gap: var(--so-space-4);
   padding: 0 var(--so-space-4);
@@ -258,7 +258,6 @@
 .slackoff-console .search-box__icon { color: var(--so-faint); font: 16px/1 var(--so-font-mono); }
 .slackoff-console .search-box__input { width: 100%; min-width: 0; background: transparent; outline: 0; }
 .slackoff-console .search-box__input::placeholder { color: var(--so-faint); }
-.slackoff-console .topbar__count { color: var(--so-dim); font: 12px/1 var(--so-font-mono); white-space: nowrap; }
 
 .slackoff-console .console-body {
   min-width: 0;
