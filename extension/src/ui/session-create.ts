@@ -20,6 +20,7 @@ export class SessionCreator {
     type: "text",
     required: true,
     autocomplete: "off",
+    value: "~",
     placeholder: "~/src/project",
   });
   #prompt = element("textarea", "session-create__input session-create__prompt", {

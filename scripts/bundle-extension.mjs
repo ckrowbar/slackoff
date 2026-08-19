@@ -38,7 +38,7 @@ const USERSCRIPT_ICON = `data:image/png;base64,${readFileSync(iconPngs[1]).toStr
 const USERSCRIPT_BANNER = `// ==UserScript==
 // @name         Slackoff Console
 // @namespace    io.github.ckrowbar.slackoff
-// @version      0.1.16
+// @version      0.1.17
 // @description  Coding-agent console for OMP sessions, rendered over your Slackoff DM
 // @author       ckrowbar
 // @icon         ${USERSCRIPT_ICON}

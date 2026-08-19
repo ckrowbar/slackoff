@@ -321,7 +321,7 @@
 .slackoff-console .rail__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--so-space-2);
   padding: 0 var(--so-space-4);
   border-bottom: 1px solid var(--so-border);
 }
@@ -335,7 +335,13 @@
 
 .slackoff-console .rail__count {
   color: var(--so-faint);
+  margin-left: auto;
   font: 11px/1 var(--so-font-mono);
+}
+
+.slackoff-console .rail__new-session {
+  min-height: 30px;
+  padding-inline: var(--so-space-2);
 }
 
 .slackoff-console .session-list {

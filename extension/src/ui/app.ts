@@ -57,13 +57,15 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   const search = element("input", "search-box__input", { type: "search", placeholder: "Search sessions", autocomplete: "off", spellcheck: "false", ariaLabel: "Search sessions" });
   search.oninput = () => controller.setQuery(search.value);
   searchWrap.append(search);
-  const newSessionButton = element("button", "secondary-button topbar__new-session", {
+  const newSessionButton = element("button", "secondary-button rail__new-session", {
     type: "button",
-    text: "New session",
+    text: "New",
+    ariaLabel: "New session",
+    title: "New session",
   });
   const themeToggle = element("button", "icon-button theme-toggle", { type: "button" });
   const topbarActions = element("div", "topbar__actions");
-  topbarActions.append(newSessionButton, themeToggle);
+  topbarActions.append(themeToggle);
   topbar.append(brand, filters, searchWrap, topbarActions);
 
   const body = element("div", "console-body");
@@ -71,7 +73,7 @@ export const mountApp: MountApp = (root, controller, preferences): (() => void) 
   const railHeader = element("header", "rail__header");
   const railTitle = element("h2", "rail__title", { text: "Sessions" });
   const railCount = element("span", "rail__count");
-  railHeader.append(railTitle, railCount);
+  railHeader.append(railTitle, railCount, newSessionButton);
   const main = element("main", "main-pane");
   const sessionHeader = element("header", "session-header");
   const headingCopy = element("div", "session-header__copy");
