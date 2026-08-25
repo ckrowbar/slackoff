@@ -265,6 +265,8 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       const modelState = getSessionModelState(pi, ctx);
       const title = getSessionTitle(sessionId);
       const projectIdentity = await resolveProjectIdentity(ctx);
+      const status = ctx.isIdle() ? "idle" : "working";
+      const activity = status === "working" ? "Thinking" : undefined;
       const response = await bridge.request({
         type: "register",
         requestId: randomUUID(),
@@ -275,6 +277,8 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
           ...projectIdentity,
           modelState,
         },
+        status,
+        ...(activity ? { activity } : {}),
         ...(!resetBinding && currentState.binding ? { binding: currentState.binding } : {}),
       });
       if (!response.ok || !response.binding) throw new Error(response.error ?? "Slackoff registration failed");

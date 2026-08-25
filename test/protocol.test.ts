@@ -14,9 +14,15 @@ test("accepts the current register protocol", () => {
     requestId: "request-1",
     protocolVersion: PROTOCOL_VERSION,
     session: { id: "session-1", title: "Fix parser", project: "project", modelState },
+    status: "working",
+    activity: "Thinking",
   });
 
   assert.equal(result.success, true);
+  if (result.success && result.data.type === "register") {
+    assert.equal(result.data.status, "working");
+    assert.equal(result.data.activity, "Thinking");
+  }
 });
 
 test("accepts legacy register protocols without model state", () => {
@@ -30,6 +36,7 @@ test("accepts legacy register protocols without model state", () => {
   assert.equal(result.success, true);
   if (result.success && result.data.type === "register") {
     assert.deepEqual(result.data.session.modelState, { available: [] });
+    assert.equal(result.data.status, "idle");
   }
 });
 

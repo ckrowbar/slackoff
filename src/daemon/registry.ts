@@ -106,7 +106,13 @@ export class SessionRegistry {
   readonly #sessionIdByBinding = new Map<string, string>();
   readonly #sessionIdByThread = new Map<string, string>();
 
-  register(session: SessionDescriptor, binding: SlackBinding, socket: Socket): RegistrationResult {
+  register(
+    session: SessionDescriptor,
+    binding: SlackBinding,
+    socket: Socket,
+    status?: SessionStatus,
+    activity?: string,
+  ): RegistrationResult {
     const conflictingSessionId = this.#sessionIdByBinding.get(binding.bindingId);
     if (conflictingSessionId && conflictingSessionId !== session.id) {
       throw new Error("Slack binding is already assigned to a different OMP session");
@@ -120,8 +126,8 @@ export class SessionRegistry {
       session,
       binding,
       socket,
-      status: "idle",
-      activity: undefined,
+      status: status ?? "idle",
+      activity,
       pendingQuestion: undefined,
       collapsed: false,
       btwRequests: new Map(),
@@ -130,8 +136,8 @@ export class SessionRegistry {
     record.session = session;
     record.binding = binding;
     record.socket = socket;
-    record.status = "idle";
-    record.activity = undefined;
+    record.status = status ?? "idle";
+    record.activity = activity;
     record.collapsed = false;
 
     this.#bySessionId.set(session.id, record);

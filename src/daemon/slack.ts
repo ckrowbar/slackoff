@@ -197,7 +197,12 @@ export class SlackController {
     await this.#app.stop();
   }
 
-  async ensureBinding(session: SessionDescriptor, binding: SlackBinding | undefined): Promise<SlackBinding> {
+  async ensureBinding(
+    session: SessionDescriptor,
+    binding: SlackBinding | undefined,
+    status: SessionStatus,
+    activity: string | undefined,
+  ): Promise<SlackBinding> {
     if (binding && !this.#closedBindings.delete(binding.bindingId)) {
       try {
         await this.#app.client.chat.update({
@@ -210,8 +215,8 @@ export class SlackController {
             bindingId: binding.bindingId,
             title: session.title,
             project: session.project,
-            status: "idle",
-            activity: undefined,
+            status,
+            activity,
             collapsed: false,
             connected: true,
             model: session.modelState.current,
@@ -239,8 +244,8 @@ export class SlackController {
         bindingId,
         title: session.title,
         project: session.project,
-        status: "idle",
-        activity: undefined,
+        status,
+        activity,
         collapsed: false,
         connected: true,
         model: session.modelState.current,
