@@ -20,6 +20,8 @@ export const SESSION_METADATA_EVENT = "slackoff_session";
 export const TRANSCRIPT_METADATA_EVENT = "slackoff_transcript";
 export const QUESTION_METADATA_EVENT = "slackoff_question";
 export const BTW_METADATA_EVENT = "slackoff_btw";
+const SLACK_METADATA_MAX_BYTES = 4_000;
+const UTF8_ENCODER = new TextEncoder();
 
 
 /** Lifecycle of a posted question, tracked so a reader knows whether input is still wanted. */
@@ -67,8 +69,8 @@ export const SessionMetadataPayloadSchema = z.object({
   effort: ModelEffortSchema.optional(),
   /** JSON array of model efforts accepted by the selected model. */
   efforts: JsonArrayString(z.array(ModelEffortSchema)).optional(),
-  /** JSON array of ModelDescriptor. */
-  models: JsonArrayString(z.array(ModelDescriptorPayloadSchema)),
+  /** JSON array of ModelDescriptor. Omitted when the catalog would exceed Slack's metadata limit. */
+  models: JsonArrayString(z.array(ModelDescriptorPayloadSchema)).optional(),
 });
 export type SessionMetadataPayload = z.infer<typeof SessionMetadataPayloadSchema>;
 
@@ -127,7 +129,7 @@ export interface SessionMetadataInput {
 }
 
 export function buildSessionMetadata(input: SessionMetadataInput): MessageMetadata {
-  return {
+  const metadata: MessageMetadata = {
     event_type: SESSION_METADATA_EVENT,
     event_payload: {
       v: METADATA_VERSION,
@@ -147,6 +149,12 @@ export function buildSessionMetadata(input: SessionMetadataInput): MessageMetada
       ...(input.efforts !== undefined ? { efforts: JSON.stringify(input.efforts) } : {}),
     },
   };
+  if (UTF8_ENCODER.encode(JSON.stringify(metadata)).byteLength <= SLACK_METADATA_MAX_BYTES) {
+    return metadata;
+  }
+
+  delete metadata.event_payload.models;
+  return metadata;
 }
 
 export interface TranscriptMetadataInput {
