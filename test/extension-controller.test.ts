@@ -25,6 +25,7 @@ interface CardInput {
   collapsed?: boolean;
   connected?: boolean;
   latestReply?: string;
+  bindingId?: string;
 }
 
 function rootCard(input: CardInput = {}): unknown {
@@ -53,7 +54,7 @@ function rootCard(input: CardInput = {}): unknown {
     ],
     metadata: buildSessionMetadata({
       sessionId,
-      bindingId: BINDING,
+      bindingId: input.bindingId ?? BINDING,
       title,
       project: "slackoff",
       status,
@@ -459,6 +460,32 @@ test("closeThread removes the accepted thread immediately", async () => {
   assert.equal(controller.getState().sessions.length, 0);
   assert.equal(controller.getState().selectedSessionId, undefined);
   assert.equal(controller.getState().thread, undefined);
+  controller.stop();
+});
+
+test("closeThread stays removed while Slack still returns the open root", async () => {
+  const h = harness();
+  h.respond(
+    HISTORY,
+    { ok: true, messages: [rootCard()] },
+    { ok: true, messages: [rootCard()] },
+  );
+  h.respond(REPLIES, { ok: true, messages: [rootCard()] });
+  h.respond(POST, { ok: true, ts: "1770000103.000500" });
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+
+  await controller.closeThread(SESSION_ID);
+  await h.fire(5_000);
+  assert.equal(controller.getState().sessions.length, 0);
+
+  h.respond(HISTORY, {
+    ok: true,
+    messages: [rootCard({ bindingId: "replacement-binding", ts: "1770000200.000100" })],
+  });
+  await h.fire(5_000);
+  assert.equal(controller.getState().sessions[0]?.bindingId, "replacement-binding");
   controller.stop();
 });
 

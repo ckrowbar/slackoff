@@ -110,6 +110,11 @@ class SlackController implements Controller {
   #readMarkTimer: number | undefined;
   #pendingReadTs: string | undefined;
   #lastReadAttemptTs: string | undefined;
+  /**
+   * Bindings whose accepted close command has not appeared in Slack's root metadata yet. Session
+   * polling must not resurrect these rows while the daemon updates the root asynchronously.
+   */
+  readonly #closingBindings = new Set<string>();
 
   constructor(deps: ControllerDeps) {
     this.#deps = deps;
@@ -306,8 +311,10 @@ class SlackController implements Controller {
   }
 
   async closeThread(sessionId: string): Promise<void> {
+    const session = this.#requireControllable(sessionId);
     await this.#postCommand(sessionId, "!close");
-    this.#sessions = this.#sessions.filter((session) => session.sessionId !== sessionId);
+    this.#closingBindings.add(session.bindingId);
+    this.#sessions = this.#sessions.filter((candidate) => candidate.sessionId !== sessionId);
     if (this.#selected === sessionId) {
       this.#selected = undefined;
       this.#thread = undefined;
@@ -341,10 +348,17 @@ class SlackController implements Controller {
         const session = parseSessionRoot(message, this.#deps.channelId);
         if (session) fresh.push(session);
       }
-      const merged = mergeSessions(this.#sessions, fresh, {
-        now: () => this.#deps.now(),
-        selectedSessionId: this.#selected,
-      });
+      for (const session of fresh) {
+        if (session.collapsed || !session.connected) this.#closingBindings.delete(session.bindingId);
+      }
+      const merged = mergeSessions(
+        this.#sessions,
+        fresh.filter((session) => !this.#closingBindings.has(session.bindingId)),
+        {
+          now: () => this.#deps.now(),
+          selectedSessionId: this.#selected,
+        },
+      );
       this.#sessions = merged.filter((session) => session.connected && !session.collapsed);
       if (this.#selected && !this.#sessions.some((session) => session.sessionId === this.#selected)) {
         this.#selected = undefined;
