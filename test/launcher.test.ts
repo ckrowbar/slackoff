@@ -36,18 +36,16 @@ test("passes launch values through tmux environment instead of the shell command
   const args = buildTmuxArguments(
     { name: "parser-fix", cwd: "/workspace", prompt: "Review 'quoted' input; do not interpolate" },
     "/opt/omp/bin/omp",
-    "/opt/slackoff/extension.js",
   );
 
   assert.deepEqual(args.slice(0, 6), ["new-session", "-d", "-s", "parser-fix", "-c", "/workspace"]);
   assert.ok(args.includes("SLACKOFF_AUTO_ENABLE=1"));
   assert.ok(args.includes("SLACKOFF_OMP_PATH=/opt/omp/bin/omp"));
-  assert.ok(args.includes("SLACKOFF_EXTENSION_PATH=/opt/slackoff/extension.js"));
   assert.ok(args.includes("SLACKOFF_CWD=/workspace"));
   assert.ok(args.includes("SLACKOFF_INITIAL_PROMPT=Review 'quoted' input; do not interpolate"));
   assert.equal(
     args.at(-1),
-    'exec "$SLACKOFF_OMP_PATH" --allow-home --cwd "$SLACKOFF_CWD" --extension "$SLACKOFF_EXTENSION_PATH" "$SLACKOFF_INITIAL_PROMPT"',
+    'exec "$SLACKOFF_OMP_PATH" --allow-home --cwd "$SLACKOFF_CWD" "$SLACKOFF_INITIAL_PROMPT"',
   );
 });
 

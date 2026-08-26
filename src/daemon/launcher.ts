@@ -1,7 +1,6 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
 export interface SessionLaunchRequest {
@@ -100,7 +99,6 @@ export class TmuxAttachmentTracker {
 
 export class TmuxLauncher {
   readonly #ompPath: string;
-  readonly #extensionPath = fileURLToPath(new URL("../extension.js", import.meta.url));
   readonly #run: CommandRunner;
 
   constructor(ompPath: string, run: CommandRunner = runCommand) {
@@ -118,7 +116,7 @@ export class TmuxLauncher {
 
     const result = await this.#run(
       "tmux",
-      buildTmuxArguments(normalized, this.#ompPath, this.#extensionPath),
+      buildTmuxArguments(normalized, this.#ompPath),
     );
     if (result.code !== 0) {
       const detail = result.stderr.trim() || `tmux exited with code ${result.code}`;
@@ -196,7 +194,6 @@ export function normalizeLaunchRequest(request: SessionLaunchRequest, home = hom
 export function buildTmuxArguments(
   request: SessionLaunchRequest,
   ompPath: string,
-  extensionPath: string,
 ): string[] {
   const environment = [
     "-e",
@@ -204,14 +201,12 @@ export function buildTmuxArguments(
     "-e",
     `SLACKOFF_OMP_PATH=${ompPath}`,
     "-e",
-    `SLACKOFF_EXTENSION_PATH=${extensionPath}`,
-    "-e",
     `SLACKOFF_CWD=${request.cwd}`,
   ];
   if (request.prompt) environment.push("-e", `SLACKOFF_INITIAL_PROMPT=${request.prompt}`);
   const command = request.prompt
-    ? 'exec "$SLACKOFF_OMP_PATH" --allow-home --cwd "$SLACKOFF_CWD" --extension "$SLACKOFF_EXTENSION_PATH" "$SLACKOFF_INITIAL_PROMPT"'
-    : 'exec "$SLACKOFF_OMP_PATH" --allow-home --cwd "$SLACKOFF_CWD" --extension "$SLACKOFF_EXTENSION_PATH"';
+    ? 'exec "$SLACKOFF_OMP_PATH" --allow-home --cwd "$SLACKOFF_CWD" "$SLACKOFF_INITIAL_PROMPT"'
+    : 'exec "$SLACKOFF_OMP_PATH" --allow-home --cwd "$SLACKOFF_CWD"';
   return ["new-session", "-d", "-s", request.name, "-c", request.cwd, ...environment, command];
 }
 

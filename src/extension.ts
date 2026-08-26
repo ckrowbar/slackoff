@@ -109,8 +109,16 @@ export function maintainSlackoffRegistration(
   });
 }
 
+interface SlackoffRuntimeGlobal {
+  __slackoffExtensionInstance?: symbol;
+}
+
 
 export default function slackoffExtension(pi: ExtensionAPI): void {
+  const runtime = globalThis as SlackoffRuntimeGlobal;
+  const instance = Symbol("slackoff-extension");
+  if (runtime.__slackoffExtensionInstance) return;
+  runtime.__slackoffExtensionInstance = instance;
   const slackAskParameters = pi.zod.object({
     questions: pi.zod
       .array(
@@ -667,6 +675,9 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     rejectPendingAnswers(new Error("Slackoff session shut down"));
     client?.disconnect();
     currentContext = undefined;
+    if (runtime.__slackoffExtensionInstance === instance) {
+      delete runtime.__slackoffExtensionInstance;
+    }
   });
 }
 function getSessionModelState(pi: ExtensionAPI, ctx: ExtensionContext): SessionModelState {
