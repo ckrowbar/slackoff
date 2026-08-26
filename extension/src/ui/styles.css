@@ -642,7 +642,18 @@
 .slackoff-console h5.markdown-heading,
 .slackoff-console h6.markdown-heading { font-size: 1em; }
 .slackoff-console .markdown-list { margin: 0 0 var(--so-space-3); padding-left: var(--so-space-5); }
+.slackoff-console ol.markdown-list { list-style: decimal outside; }
+.slackoff-console ul.markdown-list { list-style: disc outside; }
+.slackoff-console .markdown-list > li { display: list-item; }
 .slackoff-console .markdown-list li + li { margin-top: var(--so-space-1); }
+.slackoff-console .markdown-table-wrap { max-width: 100%; margin: 0 0 var(--so-space-3); overflow-x: auto; border: 1px solid var(--so-border); border-radius: var(--so-radius); }
+.slackoff-console .markdown-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 0.92em; line-height: 1.5; }
+.slackoff-console .markdown-table__cell { padding: var(--so-space-2) var(--so-space-3); border-right: 1px solid var(--so-border); border-bottom: 1px solid var(--so-border); text-align: left; vertical-align: top; }
+.slackoff-console .markdown-table th { background: var(--so-panel); color: var(--so-dim); font-weight: 700; }
+.slackoff-console .markdown-table tr:last-child .markdown-table__cell { border-bottom: 0; }
+.slackoff-console .markdown-table__cell:last-child { border-right: 0; }
+.slackoff-console .markdown-table__cell--center { text-align: center; }
+.slackoff-console .markdown-table__cell--right { text-align: right; }
 .slackoff-console .markdown-blockquote {
   margin: 0 0 var(--so-space-3);
   padding: var(--so-space-1) 0 var(--so-space-1) var(--so-space-4);
