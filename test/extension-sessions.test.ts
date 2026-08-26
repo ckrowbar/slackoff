@@ -120,6 +120,28 @@ const metadataRoot = {
   }),
 };
 
+const compactMetadataRoot = {
+  ...metadataRoot,
+  metadata: buildSessionMetadata({
+    sessionId: "019fec89ab12cd34ef",
+    bindingId: BINDING,
+    title: "Review PR 1776",
+    project: "slack & friends",
+    status: "working",
+    activity: "Thinking",
+    collapsed: false,
+    connected: true,
+    model: SOL,
+    models: Array.from({ length: 300 }, (_, index) => ({
+      provider: `provider-${index}`,
+      id: `model-${index}`,
+      name: `Model ${index}`,
+    })),
+    effort: "high",
+    efforts: ["off", "low", "medium", "high"],
+  }),
+};
+
 const labelRoot = {
   bot_id: "B07SLACKOFF",
   ts: ROOT_TS,
@@ -270,6 +292,22 @@ const rootCases: RootCase[] = [
       startedAt: tsToMillis(ROOT_TS),
       updatedAt: tsToMillis(LATEST_REPLY),
       unread: 0,
+      controllable: true,
+    },
+  },
+  {
+    name: "compact metadata keeps identity and reads the model catalog from blocks",
+    message: compactMetadataRoot,
+    expected: {
+      sessionId: "019fec89ab12cd34ef",
+      bindingId: BINDING,
+      title: "Review PR 1776",
+      models: [
+        { ...SOL, selector: "openai-codex/gpt-5.6-sol" },
+        { ...OPUS, selector: "anthropic/claude-opus-4-6" },
+      ],
+      collapsed: false,
+      connected: true,
       controllable: true,
     },
   },

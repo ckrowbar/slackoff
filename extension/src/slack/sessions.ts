@@ -334,7 +334,7 @@ export function parseSessionRoot(message: unknown, channelId: string): SessionVi
   const activity = payload ? payload.activity : (card?.activity ?? "");
   const connected = payload?.connected ?? (!collapsed && status !== "offline" && status !== "disabled");
 
-  const models: ModelOption[] = payload
+  const models: ModelOption[] = payload?.models
     ? payload.models.map((model) => ({ ...model, selector: `${model.provider}/${model.id}` }))
     : (card?.models ?? []);
   const efforts = payload?.efforts ?? card?.efforts ?? [];

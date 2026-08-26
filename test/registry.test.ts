@@ -38,6 +38,20 @@ test("new registration takes the lease and stale disconnect cannot evict it", ()
   assert.equal(registry.getBySessionId(session.id)?.socket, secondSocket);
 });
 
+test("lease takeover does not reset a working session to ready", () => {
+  const registry = new SessionRegistry();
+  const firstSocket = new Socket();
+  const secondSocket = new Socket();
+  const original = registry.register(session, binding, firstSocket).record;
+  original.status = "working";
+  original.activity = "Thinking";
+
+  const takeover = registry.register(session, binding, secondSocket, "working", "Thinking").record;
+
+  assert.equal(takeover.status, "working");
+  assert.equal(takeover.activity, "Thinking");
+});
+
 test("updates titles only from the session's active connection", () => {
   const registry = new SessionRegistry();
   const activeSocket = new Socket();

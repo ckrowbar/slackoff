@@ -111,8 +111,19 @@ export class SlackoffDaemon {
       case "register": {
         try {
           const session = this.#slack.claimTmuxAttachment(message.session);
-          const binding = await this.#slack.ensureBinding(session, message.binding);
-          const { record, replacedSocket } = this.#registry.register(session, binding, socket);
+          const binding = await this.#slack.ensureBinding(
+            session,
+            message.binding,
+            message.status,
+            message.activity,
+          );
+          const { record, replacedSocket } = this.#registry.register(
+            session,
+            binding,
+            socket,
+            message.status,
+            message.activity,
+          );
           if (replacedSocket) {
             replacedSocket.write(encodeMessage({ type: "replaced", sessionId: message.session.id, reason: "lease" }));
           }

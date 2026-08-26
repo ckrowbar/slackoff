@@ -90,6 +90,7 @@ export function forwardBtwLifecycleEvent(
 interface RegistrationMaintenanceOptions {
   enabled: boolean;
   registered: boolean;
+  blocked?: boolean;
   activate(): Promise<void>;
   onRegistered(): void;
   onError(error: Error): void;
@@ -98,7 +99,7 @@ interface RegistrationMaintenanceOptions {
 export function maintainSlackoffRegistration(
   options: RegistrationMaintenanceOptions,
 ): Promise<void> | undefined {
-  if (!options.enabled) return undefined;
+  if (!options.enabled || options.blocked) return undefined;
   if (options.registered) {
     options.onRegistered();
     return undefined;
@@ -108,8 +109,13 @@ export function maintainSlackoffRegistration(
   });
 }
 
+const SLACKOFF_INSTANCE_ENV = "SLACKOFF_EXTENSION_INSTANCE";
+
 
 export default function slackoffExtension(pi: ExtensionAPI): void {
+  const instance = randomUUID();
+  if (process.env[SLACKOFF_INSTANCE_ENV]) return;
+  process.env[SLACKOFF_INSTANCE_ENV] = instance;
   const slackAskParameters = pi.zod.object({
     questions: pi.zod
       .array(
@@ -141,6 +147,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
   let lastSessionTitle: string | undefined;
   let lastRegistrationError: string | undefined;
   let resetBindingOnNextRegistration = false;
+  let registrationBlocked = false;
 
   const reportError = (error: Error): void => {
     pi.logger.error("Slackoff extension error", {
@@ -265,6 +272,8 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       const modelState = getSessionModelState(pi, ctx);
       const title = getSessionTitle(sessionId);
       const projectIdentity = await resolveProjectIdentity(ctx);
+      const status = ctx.isIdle() ? "idle" : "working";
+      const activity = status === "working" ? "Thinking" : undefined;
       const response = await bridge.request({
         type: "register",
         requestId: randomUUID(),
@@ -275,12 +284,15 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
           ...projectIdentity,
           modelState,
         },
+        status,
+        ...(activity ? { activity } : {}),
         ...(!resetBinding && currentState.binding ? { binding: currentState.binding } : {}),
       });
       if (!response.ok || !response.binding) throw new Error(response.error ?? "Slackoff registration failed");
 
       registeredSessionId = sessionId;
       resetBindingOnNextRegistration = false;
+      registrationBlocked = false;
       lastRegistrationError = undefined;
       lastModelStateSignature = JSON.stringify(modelState);
       lastSessionTitle = title;
@@ -336,6 +348,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
         ctx.ui.notify("Slack thread closed; /slackoff on will create a new thread", "info");
       } else {
         registeredSessionId = undefined;
+        registrationBlocked = true;
         ctx.ui.notify("Slackoff control moved to another process for this session", "warning");
         rejectPendingAnswers(new Error("Slackoff control moved to another process"), message.sessionId);
       }
@@ -541,6 +554,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       if (action === "on") {
         currentState = { ...currentState, enabled: true };
         persistState();
+        registrationBlocked = false;
         await activate(ctx);
         ctx.ui.notify("Slackoff enabled for this session", "info");
         return;
@@ -568,6 +582,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     return maintainSlackoffRegistration({
       enabled: currentState.enabled,
       registered: registeredSessionId !== undefined,
+      blocked: registrationBlocked,
       activate: () => activate(ctx, resetBindingOnNextRegistration),
       onRegistered: () => {
         sendSessionTitle();
@@ -581,6 +596,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     currentContext = ctx;
     currentState = restoreState(ctx);
     resetBindingOnNextRegistration = false;
+    registrationBlocked = false;
     if (process.env.SLACKOFF_AUTO_ENABLE === "1") {
       delete process.env.SLACKOFF_AUTO_ENABLE;
       if (!currentState.enabled) {
@@ -597,6 +613,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     deactivate("switch");
     currentContext = ctx;
     currentState = restoreState(ctx);
+    registrationBlocked = false;
     if (event.reason === "new") currentState = { version: 1, enabled: false };
     resetBindingOnNextRegistration = event.reason === "fork" || event.reason === "handoff";
     if (currentState.enabled) await maintainRegistration();
@@ -655,6 +672,9 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     rejectPendingAnswers(new Error("Slackoff session shut down"));
     client?.disconnect();
     currentContext = undefined;
+    if (process.env[SLACKOFF_INSTANCE_ENV] === instance) {
+      delete process.env[SLACKOFF_INSTANCE_ENV];
+    }
   });
 }
 function getSessionModelState(pi: ExtensionAPI, ctx: ExtensionContext): SessionModelState {

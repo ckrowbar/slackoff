@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 6 as const;
+export const PROTOCOL_VERSION = 7 as const;
 
 export const SessionStatusSchema = z.enum([
   "idle",
@@ -63,6 +63,8 @@ const RegisterRequestSchema = z.object({
   protocolVersion: z.number().int().min(1).max(PROTOCOL_VERSION),
   session: SessionDescriptorSchema,
   binding: SlackBindingSchema.optional(),
+  status: SessionStatusSchema.default("idle"),
+  activity: z.string().optional(),
 });
 
 const UnregisterMessageSchema = z.object({

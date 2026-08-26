@@ -104,6 +104,26 @@ test("session metadata round-trips with the model list decoded", () => {
   });
 });
 
+test("session metadata stays below Slack's 4 KB limit with a large model catalog", () => {
+  const oversized = buildSessionMetadata({
+    sessionId: "session-123456789",
+    bindingId: "binding-1",
+    title: "Fix parser",
+    project: "slackoff",
+    status: "working",
+    collapsed: false,
+    connected: true,
+    model: models[0],
+    models: Array.from({ length: 300 }, (_, index) => ({
+      provider: `provider-${index}`,
+      id: `model-${index}`,
+      name: `Model ${index}`,
+    })),
+  });
+
+  assert.ok(new TextEncoder().encode(JSON.stringify(oversized)).byteLength <= 4_000);
+});
+
 test("session metadata remains compatible with cards written before connected state", () => {
   const { connected: _connected, ...event_payload } = sessionMetadata.event_payload;
   const parsed = parseMessageMetadata({ event_type: SESSION_METADATA_EVENT, event_payload });
