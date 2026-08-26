@@ -40,6 +40,7 @@ const transcriptMetadata = buildTranscriptMetadata({
   sessionId: "session-123456789",
   bindingId: "binding-1",
   role: "assistant",
+  entryId: "entry-123",
   chunk: 2,
   chunks: 3,
 });
@@ -154,7 +155,7 @@ test("session metadata keeps an absent model and empty activity distinguishable"
   assert.deepEqual(parsed.payload.models, []);
 });
 
-test("transcript metadata round-trips chunk indices", () => {
+test("transcript metadata round-trips entry identity and chunk indices", () => {
   const parsed = parseMessageMetadata(transcriptMetadata);
   assert.ok(parsed && parsed.kind === "transcript");
   assert.deepEqual(parsed.payload, {
@@ -162,6 +163,7 @@ test("transcript metadata round-trips chunk indices", () => {
     sessionId: "session-123456789",
     bindingId: "binding-1",
     role: "assistant",
+    entryId: "entry-123",
     chunk: 2,
     chunks: 3,
   });

@@ -82,7 +82,14 @@ function reply(ts: string, text: string, role: "user" | "assistant"): unknown {
         text: { type: "mrkdwn", text: role === "user" ? `*Local instruction*\n${text}` : text },
       },
     ],
-    metadata: buildTranscriptMetadata({ sessionId: SESSION_ID, bindingId: BINDING, role, chunk: 0, chunks: 1 }),
+    metadata: buildTranscriptMetadata({
+      sessionId: SESSION_ID,
+      bindingId: BINDING,
+      role,
+      entryId: `entry-${ts}`,
+      chunk: 0,
+      chunks: 1,
+    }),
   };
 }
 
