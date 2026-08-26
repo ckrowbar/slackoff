@@ -125,7 +125,7 @@ const INITIAL_THREADS = new Map<string, ThreadState>([
     oldestTs: "1710000001.000010",
     events: [
       event("1710000001.000010", 36, "user", "Build a dense, keyboard-first console for the Slackoff extension. Keep every untrusted transcript value out of innerHTML."),
-      event("1710000001.000020", 32, "assistant", "## Rendering status\n\nThe renderer now supports **readable Markdown** without trusting raw HTML.\n\n- Semantic headings and lists\n- Safe [links](https://developer.mozilla.org/)\n- Inline `code` and ~~obsolete text~~\n\n> Raw HTML stays text, so `<img src=x onerror=alert(1)>` cannot execute."),
+      event("1710000001.000020", 32, "assistant", "## Rendering status\n\nThe renderer now supports **readable Markdown** without trusting raw HTML.\n\n1. Semantic headings and ordered lists\n\n1. Safe [links](https://developer.mozilla.org/)\n\n1. Inline `code` and ~~obsolete text~~\n\n| Surface | Support |\n| :--- | ---: |\n| Lists | Incrementing |\n| Tables | Scrollable |\n\n> Raw HTML stays text, so `<img src=x onerror=alert(1)>` cannot execute."),
       event("1710000001.000030", 24, "notice", "Synced 14 earlier thread messages."),
       event("1710000001.000040", 18, "assistant", "The keyed update path keeps session rows and transcript events stable across state changes.\n\n```ts\nfunction reconcile(events: readonly ThreadEvent[]): void {\n  const live = new Set(events.map((event) => event.ts));\n  for (const [ts, node] of nodes) {\n    if (!live.has(ts)) node.remove();\n  }\n}\n```\n\nReference: https://developer.mozilla.org/en-US/docs/Web/API/Node/replaceChild."),
       event("1710000001.000050", 8, "assistant", LONG_LINE),

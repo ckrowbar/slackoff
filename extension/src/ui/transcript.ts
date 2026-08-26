@@ -1,5 +1,6 @@
 import type { PendingQuestion, SessionView, ThreadEvent, ThreadState } from "../types.js";
 import { element, replaceChildren } from "./dom.js";
+import { parseMarkdownList, parseMarkdownTable, type MarkdownTableBlock } from "./markdown.js";
 
 interface CachedEvent {
   node: HTMLElement;
@@ -96,6 +97,39 @@ function appendParagraph(parent: HTMLElement, lines: readonly string[]): void {
   });
   parent.append(paragraph);
 }
+function appendMarkdownTable(parent: HTMLElement, block: MarkdownTableBlock): void {
+  const wrapper = element("div", "markdown-table-wrap");
+  const table = element("table", "markdown-table");
+  const head = document.createElement("thead");
+  const headingRow = document.createElement("tr");
+  block.header.forEach((text, index) => {
+    const alignment = block.alignments[index];
+    const cell = element("th", alignment ? `markdown-table__cell markdown-table__cell--${alignment}` : "markdown-table__cell", {
+      scope: "col",
+    });
+    appendInline(cell, text);
+    headingRow.append(cell);
+  });
+  head.append(headingRow);
+  table.append(head);
+
+  if (block.rows.length > 0) {
+    const body = document.createElement("tbody");
+    for (const row of block.rows) {
+      const tableRow = document.createElement("tr");
+      row.forEach((text, index) => {
+        const alignment = block.alignments[index];
+        const cell = element("td", alignment ? `markdown-table__cell markdown-table__cell--${alignment}` : "markdown-table__cell");
+        appendInline(cell, text);
+        tableRow.append(cell);
+      });
+      body.append(tableRow);
+    }
+    table.append(body);
+  }
+  wrapper.append(table);
+  parent.append(wrapper);
+}
 
 function appendRichText(parent: HTMLElement, text: string): void {
   const prose = element("div", "rich-prose");
@@ -147,21 +181,27 @@ function appendRichText(parent: HTMLElement, text: string): void {
       continue;
     }
 
-    const item = /^ {0,3}([-+*]|\d+\.)\s+(.+)$/.exec(line);
-    if (item) {
+    const table = parseMarkdownTable(lines, index);
+    if (table) {
       flushParagraph();
-      const ordered = /\d+\./.test(item[1] ?? "");
-      const list = document.createElement(ordered ? "ol" : "ul");
+      appendMarkdownTable(prose, table);
+      index = table.nextIndex;
+      continue;
+    }
+
+    const listBlock = parseMarkdownList(lines, index);
+    if (listBlock) {
+      flushParagraph();
+      const list = document.createElement(listBlock.ordered ? "ol" : "ul");
       list.className = "markdown-list";
-      while (index < lines.length) {
-        const next = /^ {0,3}([-+*]|\d+\.)\s+(.+)$/.exec(lines[index] ?? "");
-        if (!next || /\d+\./.test(next[1] ?? "") !== ordered) break;
+      if (listBlock.ordered && listBlock.start !== 1) list.setAttribute("start", String(listBlock.start));
+      for (const text of listBlock.items) {
         const listItem = document.createElement("li");
-        appendInline(listItem, next[2] ?? "");
+        appendInline(listItem, text);
         list.append(listItem);
-        index += 1;
       }
       prose.append(list);
+      index = listBlock.nextIndex;
       continue;
     }
 
