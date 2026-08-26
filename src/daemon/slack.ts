@@ -138,7 +138,6 @@ const CloseSessionStateSchema = z.object({
     }),
   }),
 });
-const SlackErrorSchema = z.object({ data: z.object({ error: z.string() }) });
 
 export class SlackController {
   readonly #app: App;
@@ -203,42 +202,13 @@ export class SlackController {
     status: SessionStatus,
     activity: string | undefined,
   ): Promise<SlackBinding> {
-    if (binding && !this.#closedBindings.delete(binding.bindingId)) {
-      try {
-        await this.#app.client.chat.update({
-          channel: binding.channelId,
-          ts: binding.threadTs,
-          text: `OMP session: ${session.title}`,
-          blocks: buildSessionBlocks(session, binding.bindingId, "idle", undefined),
-          metadata: buildSessionMetadata({
-            sessionId: session.id,
-            bindingId: binding.bindingId,
-            title: session.title,
-            project: session.project,
-            status,
-            activity,
-            collapsed: false,
-            connected: true,
-            model: session.modelState.current,
-            models: session.modelState.available,
-            effort: session.modelState.effort?.current,
-            efforts: session.modelState.effort?.available,
-          }),
-        });
-        await this.#getThreadPermalink(binding);
-        return binding;
-      } catch (error) {
-        const parsed = SlackErrorSchema.safeParse(error);
-        const code = parsed.success ? parsed.data.data.error : undefined;
-        if (code !== "message_not_found" && code !== "channel_not_found") throw error;
-      }
-    }
+    if (binding && !this.#closedBindings.delete(binding.bindingId)) return binding;
 
     const bindingId = randomUUID();
     const result = await this.#app.client.chat.postMessage({
       channel: this.#config.userId,
       text: `OMP session: ${session.title}`,
-      blocks: buildSessionBlocks(session, bindingId, "idle", undefined),
+      blocks: buildSessionBlocks(session, bindingId, status, activity),
       metadata: buildSessionMetadata({
         sessionId: session.id,
         bindingId,
