@@ -51,3 +51,20 @@ test("registration maintenance stays inert while Slackoff is disabled", async ()
   await result;
   assert.equal(attempts, 0);
 });
+
+test("registration maintenance stops after another process takes the lease", async () => {
+  let attempts = 0;
+  const result = maintainSlackoffRegistration({
+    enabled: true,
+    blocked: true,
+    registered: false,
+    activate: async () => {
+      attempts += 1;
+    },
+    onRegistered: () => assert.fail("blocked maintenance sent a heartbeat"),
+    onError: () => assert.fail("blocked maintenance reported an error"),
+  });
+
+  await result;
+  assert.equal(attempts, 0);
+});
