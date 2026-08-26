@@ -338,9 +338,9 @@ export function createFixtureController(): Controller {
       notice = `Model effort set to ${effort}.`;
       emit();
     },
-    async closeThread(sessionId) {
+    async closeThread(sessionId, closeTmux = false) {
       updateSession(sessionId, (item) => ({ ...item, collapsed: true, controllable: false, status: "done", activity: "" }));
-      notice = "Thread closed. Slack history is unchanged.";
+      notice = closeTmux ? "Thread and tmux session closed." : "Thread closed. Slack history is unchanged.";
       emit();
     },
   };

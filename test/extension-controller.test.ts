@@ -424,6 +424,7 @@ const commandCases: CommandCase[] = [
     text: "!effort high",
   },
   { name: "closeThread", run: (controller) => controller.closeThread(SESSION_ID), text: "!close" },
+  { name: "closeThread with tmux", run: (controller) => controller.closeThread(SESSION_ID, true), text: "!close tmux" },
 ];
 
 for (const row of commandCases) {
@@ -443,6 +444,38 @@ for (const row of commandCases) {
     controller.stop();
   });
 }
+
+test("setEffort keeps the selected effort while Slack accepts the command", async () => {
+  const h = harness();
+  const post = Promise.withResolvers<{ ok: true; ts: string }>();
+  h.respond(HISTORY, { ok: true, messages: [rootCard()] });
+  h.respond(REPLIES, { ok: true, messages: [rootCard()] });
+  h.respond(POST, post.promise);
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+
+  const change = controller.setEffort(SESSION_ID, "low");
+  assert.equal(controller.getState().sessions[0]?.effort, "low");
+  post.resolve({ ok: true, ts: "1770000103.000500" });
+  await change;
+  assert.equal(controller.getState().sessions[0]?.effort, "low");
+  controller.stop();
+});
+
+test("setEffort restores the previous effort when Slack rejects the command", async () => {
+  const h = harness();
+  h.respond(HISTORY, { ok: true, messages: [rootCard()] });
+  h.respond(REPLIES, { ok: true, messages: [rootCard()] });
+  h.respond(POST, new Error("ratelimited"));
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+
+  await assert.rejects(controller.setEffort(SESSION_ID, "low"), /ratelimited/);
+  assert.equal(controller.getState().sessions[0]?.effort, "high");
+  controller.stop();
+});
 
 test("closeThread removes the accepted thread immediately", async () => {
   const h = harness();

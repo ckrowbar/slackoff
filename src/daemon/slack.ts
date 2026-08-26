@@ -729,6 +729,20 @@ export class SlackController {
             await this.stopTurn(record);
             return;
           case "close":
+            if (command.closeTmux) {
+              try {
+                await this.#killOmpTmuxSession(record);
+              } catch (error) {
+                await this.#app.client.chat.postMessage({
+                  channel: record.binding.channelId,
+                  thread_ts: record.binding.threadTs,
+                  text: `Could not close tmux session: ${error instanceof Error ? error.message : String(error)}`,
+                });
+                return;
+              }
+              await this.closeSession(record, false);
+              return;
+            }
             await this.closeSession(record);
             return;
           case "model": {
@@ -857,16 +871,8 @@ export class SlackController {
       }
       const choice = parsedState.data[CLOSE_SESSION_BLOCK][CLOSE_SESSION_INPUT].selected_option.value;
       if (choice === CLOSE_AND_DELETE_TMUX) {
-        const tmuxSessionName = await this.#resolveOmpTmuxSessionName(record);
-        if (!tmuxSessionName) {
-          await ack({
-            response_action: "errors",
-            errors: { [CLOSE_SESSION_BLOCK]: "The OMP tmux session is no longer available." },
-          });
-          return;
-        }
         try {
-          await this.#launcher.killOmpSession(tmuxSessionName);
+          await this.#killOmpTmuxSession(record);
         } catch (error) {
           await ack({
             response_action: "errors",
@@ -1004,6 +1010,12 @@ export class SlackController {
   async #resolveOmpTmuxSessionName(record: ActiveSession): Promise<string | undefined> {
     const expected = record.session.tmuxSessionName ?? record.session.project;
     return (await this.#launcher.listOmpSessions()).find((session) => session.name === expected)?.name;
+  }
+
+  async #killOmpTmuxSession(record: ActiveSession): Promise<void> {
+    const tmuxSessionName = await this.#resolveOmpTmuxSessionName(record);
+    if (!tmuxSessionName) throw new Error("The OMP tmux session is no longer available.");
+    await this.#launcher.killOmpSession(tmuxSessionName);
   }
 
   async closeSession(record: ActiveSession, notifyClient = true): Promise<void> {

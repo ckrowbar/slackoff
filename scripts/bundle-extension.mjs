@@ -23,18 +23,25 @@ const extensionDirectory = join(root, "extension");
 const sourceDirectory = join(extensionDirectory, "src");
 const outputDirectory = join(extensionDirectory, "dist");
 const stylesheet = join(sourceDirectory, "ui", "styles.css");
+const icon = join(extensionDirectory, "icons", "sloth.svg");
+const iconPngs = [16, 32, 48, 128].map((size) =>
+  join(extensionDirectory, "icons", `sloth-${size}.png`),
+);
 
 const STYLES_SPECIFIER = "slackoff:styles";
+const ICON_SPECIFIER = "slackoff:icon";
 
 const USERSCRIPT_OUT = "slackoff-console.user.js";
+const USERSCRIPT_ICON = `data:image/png;base64,${readFileSync(iconPngs[1]).toString("base64")}`;
 
 /** Tampermonkey reads this block from the head of the emitted file, so it must survive verbatim. */
 const USERSCRIPT_BANNER = `// ==UserScript==
 // @name         Slackoff Console
 // @namespace    io.github.ckrowbar.slackoff
-// @version      0.1.12
+// @version      0.1.19
 // @description  Coding-agent console for OMP sessions, rendered over your Slackoff DM
 // @author       ckrowbar
+// @icon         ${USERSCRIPT_ICON}
 // @match        https://app.slack.com/client/*
 // @match        https://*.slack.com/client/*
 // @run-at       document-idle
@@ -72,6 +79,7 @@ const resolvePlugin = {
   name: "slackoff-resolve",
   setup(build) {
     build.onResolve({ filter: new RegExp(`^${STYLES_SPECIFIER}$`) }, () => ({ path: stylesheet }));
+    build.onResolve({ filter: new RegExp(`^${ICON_SPECIFIER}$`) }, () => ({ path: icon }));
 
     build.onResolve({ filter: /^\.{1,2}\// }, (args) => {
       if (!args.path.endsWith(".js")) return null;
@@ -97,7 +105,7 @@ function optionsFor(target, watchMode) {
     sourcemap: watchMode ? "inline" : "linked",
     logLevel: "info",
     define: { "process.env.NODE_ENV": '"production"' },
-    loader: { ".css": "text" },
+    loader: { ".css": "text", ".svg": "text" },
     plugins: [resolvePlugin],
     ...target.overrides,
   };
@@ -118,7 +126,7 @@ function copyStylesheet() {
 }
 
 function requireSources(selected) {
-  const missing = [...selected.map((target) => target.entry), stylesheet].filter(
+  const missing = [...selected.map((target) => target.entry), stylesheet, icon, ...iconPngs].filter(
     (path) => !existsSync(path),
   );
   if (missing.length > 0) {
