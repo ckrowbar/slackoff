@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildBtwMetadata, buildQuestionMetadata, buildSessionMetadata, buildTranscriptMetadata } from "../src/metadata.js";
+import {
+  buildBtwMetadata,
+  buildQuestionMetadata,
+  buildSessionMetadata,
+  buildTranscriptMetadata,
+  METADATA_VERSION,
+  TRANSCRIPT_METADATA_EVENT,
+} from "../src/metadata.js";
 import {
   mergeSessions,
   parseSessionRoot,
@@ -489,7 +496,14 @@ const daemonUserEcho = {
       text: { type: "mrkdwn", text: "*Local instruction*\nship it &amp; run the tests" },
     },
   ],
-  metadata: buildTranscriptMetadata({ sessionId: "019fec89ab12cd34ef", bindingId: BINDING, role: "user", chunk: 0, chunks: 1 }),
+  metadata: buildTranscriptMetadata({
+    sessionId: "019fec89ab12cd34ef",
+    bindingId: BINDING,
+    role: "user",
+    entryId: "entry-local-instruction",
+    chunk: 0,
+    chunks: 1,
+  }),
 };
 
 const legacyUserEcho = {
@@ -518,6 +532,38 @@ const assistantReply = {
   blocks: [{ type: "section", block_id: "A1", text: { type: "mrkdwn", text: "Patched src/api.ts &amp; the tests" } }],
   metadata: null,
 };
+
+interface TranscriptChunkFixture {
+  ts: string;
+  text: string;
+  chunk: number;
+  chunks: number;
+  entryId?: string;
+}
+
+function transcriptChunk(input: TranscriptChunkFixture): unknown {
+  const payload = {
+    sessionId: "019fec89ab12cd34ef",
+    bindingId: BINDING,
+    role: "assistant" as const,
+    chunk: input.chunk,
+    chunks: input.chunks,
+  };
+  const metadata = input.entryId
+    ? buildTranscriptMetadata({ ...payload, entryId: input.entryId })
+    : {
+        event_type: TRANSCRIPT_METADATA_EVENT,
+        event_payload: { v: METADATA_VERSION, ...payload },
+      };
+  return {
+    bot_id: "B07SLACKOFF",
+    ts: input.ts,
+    thread_ts: ROOT_TS,
+    text: input.text,
+    blocks: [{ type: "section", text: { type: "mrkdwn", text: input.text } }],
+    metadata,
+  };
+}
 
 const btwReply = {
   bot_id: "B07SLACKOFF",
@@ -720,6 +766,106 @@ test("reduceThread uses the expected root timestamp when unthreaded replies arri
   const replyWithoutThreadTs = { ...assistantReply, thread_ts: undefined };
   const { events } = reduceThread([replyWithoutThreadTs, { ...metadataRoot, thread_ts: undefined }], ROOT_TS);
   assert.deepEqual(events.map((event) => event.text), ["Patched src/api.ts & the tests"]);
+});
+
+test("reduceThread reassembles identified chunks across intervening Slack replies", () => {
+  const first = transcriptChunk({
+    ts: "1770000108.000100",
+    text: "## Result\n\n| Name |",
+    entryId: "entry-table",
+    chunk: 0,
+    chunks: 2,
+  });
+  const second = transcriptChunk({
+    ts: "1770000108.000300",
+    text: " Value |\n| --- | --- |\n| A | B |",
+    entryId: "entry-table",
+    chunk: 1,
+    chunks: 2,
+  });
+  const interveningNotice = { ...notice, ts: "1770000108.000200" };
+
+  const { events } = reduceThread([second, metadataRoot, interveningNotice, first]);
+
+  assert.deepEqual(events.map((event) => event.kind), ["assistant", "notice"]);
+  assert.equal(events[0]?.ts, "1770000108.000100");
+  assert.equal(events[0]?.text, "## Result\n\n| Name | Value |\n| --- | --- |\n| A | B |");
+});
+
+test("reduceThread reassembles strictly adjacent legacy chunks", () => {
+  const first = transcriptChunk({
+    ts: "1770000109.000100",
+    text: "First paragraph\n",
+    chunk: 0,
+    chunks: 2,
+  });
+  const second = transcriptChunk({
+    ts: "1770000109.000200",
+    text: "\nSecond paragraph",
+    chunk: 1,
+    chunks: 2,
+  });
+
+  const { events } = reduceThread([metadataRoot, second, first]);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.text, "First paragraph\n\nSecond paragraph");
+});
+
+test("reduceThread does not guess across interrupted legacy chunks", () => {
+  const first = transcriptChunk({
+    ts: "1770000110.000100",
+    text: "First half\n",
+    chunk: 0,
+    chunks: 2,
+  });
+  const second = transcriptChunk({
+    ts: "1770000110.000300",
+    text: "\nSecond half",
+    chunk: 1,
+    chunks: 2,
+  });
+  const interveningNotice = { ...notice, ts: "1770000110.000200" };
+
+  const { events } = reduceThread([metadataRoot, first, interveningNotice, second]);
+
+  assert.deepEqual(events.map((event) => event.text), [
+    "First half",
+    "Session offline; instruction was not delivered.",
+    "Second half",
+  ]);
+});
+
+test("reduceThread preserves incomplete and duplicate identified chunks", () => {
+  const incomplete = transcriptChunk({
+    ts: "1770000111.000100",
+    text: "Incomplete first half\n",
+    entryId: "entry-incomplete",
+    chunk: 0,
+    chunks: 2,
+  });
+  const duplicateA = transcriptChunk({
+    ts: "1770000111.000200",
+    text: "Duplicate A",
+    entryId: "entry-duplicate",
+    chunk: 0,
+    chunks: 2,
+  });
+  const duplicateB = transcriptChunk({
+    ts: "1770000111.000300",
+    text: "Duplicate B",
+    entryId: "entry-duplicate",
+    chunk: 0,
+    chunks: 2,
+  });
+
+  const { events } = reduceThread([metadataRoot, incomplete, duplicateA, duplicateB]);
+
+  assert.deepEqual(events.map((event) => event.text), [
+    "Incomplete first half",
+    "Duplicate A",
+    "Duplicate B",
+  ]);
 });
 
 test("reduceThread treats a superseded question as settled", () => {

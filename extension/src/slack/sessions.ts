@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { parseMessageMetadata, type QuestionMetadataState } from "../../../src/metadata.js";
+import {
+  parseMessageMetadata,
+  type QuestionMetadataState,
+  type TranscriptMetadataPayload,
+} from "../../../src/metadata.js";
 import { SessionStatusSchema, type SessionStatus } from "../../../src/protocol.js";
 import { flattenSlackLinks, unescapeMrkdwn } from "../../../src/slack-text.js";
 import type {
@@ -391,6 +395,133 @@ const QUESTION_KIND_BY_STATE: Record<QuestionMetadataState, ThreadEventKind> = {
   offline: "cancelled",
 };
 
+interface TranscriptFragment {
+  index: number;
+  message: RawSlackMessage;
+  payload: TranscriptMetadataPayload;
+  text: string;
+}
+
+interface ReassembledTranscript {
+  event: ThreadEvent;
+  indexes: readonly number[];
+}
+
+function transcriptFragment(message: RawSlackMessage, index: number): TranscriptFragment | undefined {
+  const metadata = parseMessageMetadata(message.metadata);
+  if (metadata?.kind !== "transcript") return undefined;
+  const sections = (message.blocks ?? []).filter((block) => block.type === "section");
+  const body = textOf(sections[0]?.text) || message.text;
+  const stripped = body.startsWith(USER_BLOCK_PREFIX) ? body.slice(USER_BLOCK_PREFIX.length) : body;
+  return { index, message, payload: metadata.payload, text: readable(stripped) };
+}
+
+function transcriptEvent(fragment: TranscriptFragment, text = fragment.text.trim()): ThreadEvent {
+  return {
+    ts: fragment.message.ts,
+    at: tsToMillis(fragment.message.ts),
+    kind: fragment.payload.role === "user" ? "user" : "assistant",
+    text,
+  };
+}
+
+function reassembleTranscript(fragments: readonly TranscriptFragment[]): ReassembledTranscript | undefined {
+  const reference = fragments[0]?.payload;
+  if (!reference || reference.chunks <= 1 || fragments.length !== reference.chunks) return undefined;
+  const ordered: (TranscriptFragment | undefined)[] = Array.from({ length: reference.chunks });
+  for (const fragment of fragments) {
+    const payload = fragment.payload;
+    if (
+      payload.sessionId !== reference.sessionId ||
+      payload.bindingId !== reference.bindingId ||
+      payload.role !== reference.role ||
+      payload.entryId !== reference.entryId ||
+      payload.chunks !== reference.chunks ||
+      payload.chunk >= reference.chunks ||
+      ordered[payload.chunk] !== undefined
+    ) {
+      return undefined;
+    }
+    ordered[payload.chunk] = fragment;
+  }
+  const complete: TranscriptFragment[] = [];
+  for (const fragment of ordered) {
+    if (!fragment) return undefined;
+    complete.push(fragment);
+  }
+  const first = complete[0];
+  if (!first) return undefined;
+  return {
+    event: transcriptEvent(first, complete.map((fragment) => fragment.text).join("").trim()),
+    indexes: complete.map((fragment) => fragment.index),
+  };
+}
+
+function identifiedTranscriptGroups(replies: readonly RawSlackMessage[]): Map<number, ReassembledTranscript> {
+  const fragmentsByEntry = new Map<string, TranscriptFragment[]>();
+  replies.forEach((reply, index) => {
+    const fragment = transcriptFragment(reply, index);
+    const entryId = fragment?.payload.entryId;
+    if (!fragment || !entryId || fragment.payload.chunks <= 1) return;
+    const fragments = fragmentsByEntry.get(entryId) ?? [];
+    fragments.push(fragment);
+    fragmentsByEntry.set(entryId, fragments);
+  });
+
+  const groups = new Map<number, ReassembledTranscript>();
+  for (const fragments of fragmentsByEntry.values()) {
+    const group = reassembleTranscript(fragments);
+    if (!group) continue;
+    groups.set(Math.min(...group.indexes), group);
+  }
+  return groups;
+}
+
+function legacyTranscriptGroup(
+  replies: readonly RawSlackMessage[],
+  startIndex: number,
+): ReassembledTranscript | undefined {
+  const firstReply = replies[startIndex];
+  if (!firstReply) return undefined;
+  const first = transcriptFragment(firstReply, startIndex);
+  if (!first || first.payload.entryId !== undefined || first.payload.chunk !== 0 || first.payload.chunks <= 1) {
+    return undefined;
+  }
+  const fragments: TranscriptFragment[] = [];
+  for (let chunk = 0; chunk < first.payload.chunks; chunk += 1) {
+    const index = startIndex + chunk;
+    const reply = replies[index];
+    if (!reply) return undefined;
+    const fragment = transcriptFragment(reply, index);
+    if (!fragment || fragment.payload.entryId !== undefined || fragment.payload.chunk !== chunk) return undefined;
+    fragments.push(fragment);
+  }
+  return reassembleTranscript(fragments);
+}
+
+function parseThreadEvents(replies: readonly RawSlackMessage[]): ThreadEvent[] {
+  const identified = identifiedTranscriptGroups(replies);
+  const consumed = new Set<number>();
+  const events: ThreadEvent[] = [];
+  for (let index = 0; index < replies.length; index += 1) {
+    if (consumed.has(index)) continue;
+    const identifiedGroup = identified.get(index);
+    if (identifiedGroup) {
+      events.push(identifiedGroup.event);
+      identifiedGroup.indexes.forEach((fragmentIndex) => consumed.add(fragmentIndex));
+      continue;
+    }
+    const legacyGroup = legacyTranscriptGroup(replies, index);
+    if (legacyGroup) {
+      events.push(legacyGroup.event);
+      legacyGroup.indexes.forEach((fragmentIndex) => consumed.add(fragmentIndex));
+      continue;
+    }
+    events.push(parseThreadMessage(replies[index]));
+  }
+  return events;
+}
+
 /** Classify one thread reply. Roots are dropped by reduceThread, not here. */
 export function parseThreadMessage(message: unknown): ThreadEvent {
   const parsed = RawSlackMessageSchema.safeParse(message);
@@ -435,14 +566,8 @@ export function parseThreadMessage(message: unknown): ThreadEvent {
   }
 
   if (metadata?.kind === "transcript") {
-    const body = textOf(sections[0]?.text) || raw.text;
-    const stripped = body.startsWith(USER_BLOCK_PREFIX) ? body.slice(USER_BLOCK_PREFIX.length) : body;
-    return {
-      ts: raw.ts,
-      at,
-      kind: metadata.payload.role === "user" ? "user" : "assistant",
-      text: readable(stripped).trim(),
-    };
+    const fragment = transcriptFragment(raw, 0);
+    return fragment ? transcriptEvent(fragment) : { ts: raw.ts, at, kind: "unknown", text: "" };
   }
   if (metadata?.kind === "btw") {
     const body = readable(textOf(sections[1]?.text)).trim();
@@ -491,7 +616,7 @@ export function reduceThread(messages: readonly unknown[], expectedRootTs?: stri
   const rootTs = expectedRootTs ?? inferredRoot?.ts;
   const replies = parsed.filter((message) => message.ts !== rootTs && message.thread_ts !== message.ts);
   replies.sort((left, right) => compareTs(left.ts, right.ts));
-  const events = replies.map((reply) => parseThreadMessage(reply));
+  const events = parseThreadEvents(replies);
 
   let newest: ThreadEvent | undefined;
   for (const event of events) {
