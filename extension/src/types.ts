@@ -218,6 +218,8 @@ export interface StoredSettings {
   origin?: string;
   /** Cached Slackoff DM channel id, so discovery runs once. */
   channelId?: string;
+  /** Root card bindings hidden locally after the user closed them from the console. */
+  closedBindings: string[];
   /** Slack user id the DM belongs to. */
   userId?: string;
   enabled: boolean;
@@ -236,4 +238,5 @@ export const DEFAULT_SETTINGS: StoredSettings = {
   theme: "codex",
   sidebarWidth: 360,
   sidebarCollapsed: false,
+  closedBindings: [],
 };

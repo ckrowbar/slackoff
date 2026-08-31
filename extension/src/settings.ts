@@ -8,6 +8,7 @@ export const SETTINGS_KEYS = [
   "origin",
   "channelId",
   "userId",
+  "closedBindings",
   "enabled",
   "notifications",
   "takeover",
@@ -25,6 +26,7 @@ const StoredSettingsSchema = z.object({
   origin: z.string().optional().catch(undefined),
   channelId: z.string().optional().catch(undefined),
   userId: z.string().optional().catch(undefined),
+  closedBindings: z.array(z.string().min(1)).optional().catch(undefined),
   enabled: z.boolean().optional().catch(undefined),
   notifications: z.boolean().optional().catch(undefined),
   takeover: z.boolean().optional().catch(undefined),
@@ -41,9 +43,11 @@ const StoredSettingsSchema = z.object({
 export function parseSettings(raw: unknown): StoredSettings {
   const parsed = StoredSettingsSchema.safeParse(raw ?? {});
   const value = parsed.success ? parsed.data : {};
+  const closedBindings = [...new Set(value.closedBindings ?? DEFAULT_SETTINGS.closedBindings)];
 
   return {
     ...DEFAULT_SETTINGS,
+    closedBindings,
     ...(value.origin ? { origin: value.origin } : {}),
     ...(value.channelId ? { channelId: value.channelId } : {}),
     ...(value.userId ? { userId: value.userId } : {}),

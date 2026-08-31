@@ -21,6 +21,7 @@ import {
   SESSION_LAUNCH_SUCCESS_PREFIX,
 } from "../session-launch.js";
 import {
+  buildSessionClosedMessage,
   encodeMessage,
   type ImageInput,
   type QuestionRequest,
@@ -1026,10 +1027,7 @@ export class SlackController {
     this.#closedBindings.add(record.binding.bindingId);
     if (notifyClient && record.socket) {
       record.socket.write(
-        encodeMessage({ type: "stop", sessionId: record.session.id, commandId: randomUUID() }),
-      );
-      record.socket.write(
-        encodeMessage({ type: "replaced", sessionId: record.session.id, reason: "closed" }),
+        encodeMessage(buildSessionClosedMessage(record.session.id)),
       );
     }
     await this.refreshRoot(record);

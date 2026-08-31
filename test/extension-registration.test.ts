@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { maintainSlackoffRegistration } from "../src/extension.js";
+import { maintainSlackoffRegistration, shouldAbortTurn } from "../src/extension.js";
 
 test("registration maintenance survives an initial failure and retries until registered", async () => {
   let registered = false;
@@ -67,4 +67,12 @@ test("registration maintenance stops after another process takes the lease", asy
 
   await result;
   assert.equal(attempts, 0);
+});
+
+test("closing a Slack thread does not abort the active OMP turn", () => {
+  assert.equal(shouldAbortTurn({ type: "replaced", sessionId: "session-1", reason: "closed" }), false);
+  assert.equal(
+    shouldAbortTurn({ type: "stop", sessionId: "session-1", commandId: "stop-1" }),
+    true,
+  );
 });

@@ -276,6 +276,9 @@ export class ConsoleShell {
       call: <T>(method: string, params: SlackParams): Promise<T> =>
         callSlack<T>(this.#platform, credential, method, params),
       channelId,
+      closedBindings: this.#settings.closedBindings,
+      saveClosedBindings: (closedBindings) =>
+        this.#platform.setSettings({ closedBindings: [...closedBindings] }),
       team: credential.teamName,
       now: () => Date.now(),
       setTimer: (callback: () => void, ms: number) => window.setTimeout(callback, ms),

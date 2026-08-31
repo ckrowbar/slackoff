@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ClientMessageSchema, PROTOCOL_VERSION, ServerMessageSchema } from "../src/protocol.js";
+import {
+  buildSessionClosedMessage,
+  ClientMessageSchema,
+  PROTOCOL_VERSION,
+  ServerMessageSchema,
+} from "../src/protocol.js";
 const modelState = {
   current: { provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
   available: [{ provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
@@ -148,14 +153,15 @@ test("rejects instructions with more than ten images", () => {
 });
 
 
-test("accepts a closed-session replacement notice", () => {
-  const result = ServerMessageSchema.safeParse({
+test("builds a closed-session replacement notice without a stop command", () => {
+  const message = buildSessionClosedMessage("session-1");
+
+  assert.deepEqual(message, {
     type: "replaced",
     sessionId: "session-1",
     reason: "closed",
   });
-
-  assert.equal(result.success, true);
+  assert.equal(ServerMessageSchema.safeParse(message).success, true);
 });
 
 test("accepts a bounded Slack question request", () => {

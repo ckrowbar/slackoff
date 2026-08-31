@@ -124,6 +124,7 @@ interface Harness {
   calls: Array<{ method: string; params: Record<string, string | number | boolean> }>;
   delays: number[];
   notified: SessionView[];
+  closedBindings: string[];
   respond(method: string, ...values: unknown[]): void;
   setVisible(visible: boolean): void;
   fire(ms: number): Promise<void>;
@@ -140,6 +141,7 @@ function harness(): Harness {
   let nextTimer = 1;
   let clock = 1_770_000_000_000;
   let visible = true;
+  let closedBindings: string[] = [];
 
   const settle = async (): Promise<void> => {
     for (let round = 0; round < 8; round += 1) {
@@ -152,6 +154,10 @@ function harness(): Harness {
   const deps: ControllerDeps = {
     channelId: CHANNEL,
     team: "Datadog",
+    closedBindings,
+    saveClosedBindings: async (bindings) => {
+      closedBindings.splice(0, closedBindings.length, ...bindings);
+    },
     call: async <T,>(method: string, params: Record<string, string | number | boolean>): Promise<T> => {
       calls.push({ method, params });
       const queue = queues.get(method);
@@ -186,6 +192,7 @@ function harness(): Harness {
     calls,
     delays,
     notified,
+    closedBindings,
     respond: (method, ...values) => {
       queues.set(method, values);
     },
@@ -316,6 +323,27 @@ test("sendInstruction posts to the thread, echoes optimistically, then reconcile
   assert.equal(events[0]?.pending, undefined);
   assert.equal(events[0]?.text, "rerun the suite");
   assert.equal(controller.getState().busy, false);
+  controller.stop();
+});
+
+test("sendInstruction treats a typed close command as a local close action", async () => {
+  const h = harness();
+  h.respond(HISTORY, { ok: true, messages: [rootCard()] });
+  h.respond(REPLIES, { ok: true, messages: [rootCard()] });
+  h.respond(POST, { ok: true, ts: "1770000102.000400" });
+  const controller = createSlackController(h.deps);
+  controller.start();
+  await h.settle();
+  controller.select(SESSION_ID);
+  await h.settle();
+
+  await controller.sendInstruction(SESSION_ID, " !close ");
+
+  const post = h.calls.find((entry) => entry.method === POST);
+  assert.deepEqual(post?.params, { channel: CHANNEL, thread_ts: ROOT_TS, text: "!close" });
+  assert.equal(controller.getState().sessions.length, 0);
+  assert.equal(controller.getState().thread, undefined);
+  assert.deepEqual(h.closedBindings, [BINDING]);
   controller.stop();
 });
 
@@ -512,6 +540,7 @@ test("closeThread stays removed while Slack still returns the open root", async 
   await controller.closeThread(SESSION_ID);
   await h.fire(5_000);
   assert.equal(controller.getState().sessions.length, 0);
+  assert.deepEqual(h.closedBindings, [BINDING]);
 
   h.respond(HISTORY, {
     ok: true,
@@ -519,6 +548,33 @@ test("closeThread stays removed while Slack still returns the open root", async 
   });
   await h.fire(5_000);
   assert.equal(controller.getState().sessions[0]?.bindingId, "replacement-binding");
+  controller.stop();
+});
+
+test("initial poll hides roots closed by an earlier console instance", async () => {
+  const h = harness();
+  h.closedBindings.push(BINDING);
+  h.respond(HISTORY, { ok: true, messages: [rootCard()] });
+  const controller = createSlackController(h.deps);
+
+  controller.start();
+  await h.settle();
+
+  assert.equal(controller.getState().sessions.length, 0);
+  controller.stop();
+});
+
+test("confirmed closed root clears the stored binding tombstone", async () => {
+  const h = harness();
+  h.closedBindings.push(BINDING);
+  h.respond(HISTORY, { ok: true, messages: [rootCard({ collapsed: true, connected: false })] });
+  const controller = createSlackController(h.deps);
+
+  controller.start();
+  await h.settle();
+
+  assert.deepEqual(h.closedBindings, []);
+  assert.equal(controller.getState().sessions.length, 0);
   controller.stop();
 });
 

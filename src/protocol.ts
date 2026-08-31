@@ -264,6 +264,12 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   QuestionAnswerMessageSchema,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
+
+export function buildSessionClosedMessage(
+  sessionId: string,
+): Extract<ServerMessage, { type: "replaced" }> {
+  return { type: "replaced", sessionId, reason: "closed" };
+}
 export type ResponseMessage = z.infer<typeof ResponseMessageSchema>;
 export type InstructionMessage = z.infer<typeof InstructionMessageSchema>;
 export type SetEffortMessage = z.infer<typeof SetEffortMessageSchema>;

@@ -261,6 +261,7 @@ test("settings round-trip through the localStorage fallback", async () => {
       theme: "slack",
       sidebarWidth: 424,
       sidebarCollapsed: true,
+      closedBindings: [],
       channelId: "D0BNVUT538S",
     });
 
@@ -272,6 +273,7 @@ test("settings round-trip through the localStorage fallback", async () => {
       theme: "slack",
       sidebarWidth: 424,
       sidebarCollapsed: true,
+      closedBindings: [],
       channelId: "D0BNVUT538S",
     });
 
@@ -308,7 +310,7 @@ test("settings listeners see the new value and stop after unsubscribe", async ()
 
 const paritySnapshots = [
   { name: "empty store", stored: {} },
-  { name: "fully populated", stored: { origin: "https://test.slack.com", channelId: "D1", userId: "U1", enabled: false, notifications: false, takeover: false, theme: "light", sidebarWidth: 480, sidebarCollapsed: true } },
+  { name: "fully populated", stored: { origin: "https://test.slack.com", channelId: "D1", userId: "U1", closedBindings: ["B1"], enabled: false, notifications: false, takeover: false, theme: "light", sidebarWidth: 480, sidebarCollapsed: true } },
   { name: "empty strings read as absent", stored: { channelId: "", origin: "", userId: "" } },
   { name: "one corrupt key does not reset the rest", stored: { notifications: "yes", takeover: false, theme: "codex" } },
   { name: "unknown keys are ignored", stored: { theme: "codex", somethingElse: 42 } },

@@ -4,6 +4,7 @@ import {
   SESSION_LAUNCH_FAILURE_PREFIX,
   SESSION_LAUNCH_SUCCESS_PREFIX,
 } from "../../../src/session-launch.js";
+import { parseThreadCommand } from "../../../src/daemon/commands.js";
 import type { SessionLaunchRequest } from "../../../src/session-launch.js";
 
 import { mergeSessions, needsAttention, parseSessionRoot, reduceThread } from "../slack/sessions.js";
@@ -28,6 +29,9 @@ import type {
 export interface ControllerDeps {
   call<T>(method: string, params: Record<string, string | number | boolean>): Promise<T>;
   uploadImages(threadTs: string, text: string, images: readonly ImageUpload[]): Promise<void>;
+  /** Root card bindings closed locally before Slack root metadata catches up. */
+  closedBindings?: readonly string[];
+  saveClosedBindings?(bindingIds: readonly string[]): Promise<void> | void;
   channelId: string;
   /** Workspace name for the connection banner; blank when the caller has not resolved one. */
   team?: string;
@@ -110,14 +114,12 @@ class SlackController implements Controller {
   #readMarkTimer: number | undefined;
   #pendingReadTs: string | undefined;
   #lastReadAttemptTs: string | undefined;
-  /**
-   * Bindings whose accepted close command has not appeared in Slack's root metadata yet. Session
-   * polling must not resurrect these rows while the daemon updates the root asynchronously.
-   */
+  /** Bindings whose accepted close command has not appeared in Slack's root metadata yet. */
   readonly #closingBindings = new Set<string>();
 
   constructor(deps: ControllerDeps) {
     this.#deps = deps;
+    for (const bindingId of deps.closedBindings ?? []) this.#closingBindings.add(bindingId);
     this.#state = {
       connection: this.#connection,
       sessions: [],
@@ -126,6 +128,21 @@ class SlackController implements Controller {
       attention: [],
       busy: false,
     };
+  }
+
+  #persistClosedBindings(): void {
+    const save = this.#deps.saveClosedBindings;
+    if (save) void save([...this.#closingBindings]);
+  }
+
+  #rememberClosedBinding(bindingId: string): void {
+    this.#closingBindings.add(bindingId);
+    this.#persistClosedBindings();
+  }
+
+  #forgetClosedBinding(bindingId: string): void {
+    if (!this.#closingBindings.delete(bindingId)) return;
+    this.#persistClosedBindings();
   }
 
   getState(): AppState {
@@ -210,6 +227,26 @@ class SlackController implements Controller {
     const session = this.#requireControllable(sessionId);
     const body = text.trim();
     if (!body) throw new Error("Cannot send an empty instruction");
+    const command = parseThreadCommand(body);
+    if (command) {
+      switch (command.kind) {
+        case "stop":
+          await this.stopTurn(sessionId);
+          return;
+        case "close":
+          await this.closeThread(sessionId, command.closeTmux);
+          return;
+        case "model":
+          await this.setModel(sessionId, command.selector);
+          return;
+        case "effort":
+          await this.setEffort(sessionId, command.effort);
+          return;
+        case "omp":
+          await this.#postCommand(sessionId, body);
+          return;
+      }
+    }
     await this.#postEcho(session, body);
   }
 
@@ -330,7 +367,7 @@ class SlackController implements Controller {
   async closeThread(sessionId: string, closeTmux = false): Promise<void> {
     const session = this.#requireControllable(sessionId);
     await this.#postCommand(sessionId, closeTmux ? "!close tmux" : "!close");
-    this.#closingBindings.add(session.bindingId);
+    this.#rememberClosedBinding(session.bindingId);
     this.#sessions = this.#sessions.filter((candidate) => candidate.sessionId !== sessionId);
     if (this.#selected === sessionId) {
       this.#selected = undefined;
@@ -366,7 +403,7 @@ class SlackController implements Controller {
         if (session) fresh.push(session);
       }
       for (const session of fresh) {
-        if (session.collapsed || !session.connected) this.#closingBindings.delete(session.bindingId);
+        if (session.collapsed || !session.connected) this.#forgetClosedBinding(session.bindingId);
       }
       const merged = mergeSessions(
         this.#sessions,

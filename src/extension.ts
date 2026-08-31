@@ -109,6 +109,10 @@ export function maintainSlackoffRegistration(
   });
 }
 
+export function shouldAbortTurn(message: ServerMessage): boolean {
+  return message.type === "stop";
+}
+
 const SLACKOFF_INSTANCE_ENV = "SLACKOFF_EXTENSION_INSTANCE";
 
 
@@ -340,7 +344,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
       if (message.reason === "closed") {
         currentState = { version: 1, enabled: false };
         persistState();
-        if (!ctx.isIdle()) ctx.abort();
+
         deactivate("disabled");
         void disableSlackAsk().catch((error) =>
           reportError(error instanceof Error ? error : new Error(String(error))),
@@ -452,7 +456,7 @@ export default function slackoffExtension(pi: ExtensionAPI): void {
     }
 
 
-    if (!ctx.isIdle()) ctx.abort();
+    if (shouldAbortTurn(message) && !ctx.isIdle()) ctx.abort();
   };
 
   const askThroughSlack = async (
