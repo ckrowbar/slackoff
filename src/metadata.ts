@@ -79,6 +79,8 @@ export const TranscriptMetadataPayloadSchema = z.object({
   sessionId: z.string().min(1),
   bindingId: z.string().min(1),
   role: z.enum(["user", "assistant"]),
+  /** Identifies every Slack chunk that belongs to one logical transcript entry. */
+  entryId: z.string().min(1).optional(),
   /** Index of this chunk when one transcript entry was split across messages. */
   chunk: z.number().int().nonnegative().default(0),
   chunks: z.number().int().positive().default(1),
@@ -161,6 +163,7 @@ export interface TranscriptMetadataInput {
   sessionId: string;
   bindingId: string;
   role: "user" | "assistant";
+  entryId: string;
   chunk: number;
   chunks: number;
 }

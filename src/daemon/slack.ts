@@ -62,6 +62,7 @@ import {
 import { parseThreadCommand } from "./commands.js";
 import { downloadSlackImages } from "./images.js";
 import { TmuxAttachmentTracker, TmuxLauncher } from "./launcher.js";
+import { splitTranscriptText } from "./transcript.js";
 import {
   abortBtwRequests as abortActiveBtwRequests,
   appendBtwDelta,
@@ -72,6 +73,9 @@ import {
   type BtwRequest,
 } from "./registry.js";
 import { SessionRegistry } from "./registry.js";
+
+const SLACK_SECTION_TEXT_MAX = 3_000;
+const USER_TRANSCRIPT_BLOCK_PREFIX = "*Local instruction*\n";
 
 const DmMessageSchema = z.object({
   type: z.literal("message"),
@@ -316,7 +320,9 @@ export class SlackController {
   }
 
   async postTranscript(record: ActiveSession, role: "user" | "assistant", text: string): Promise<void> {
-    const chunks = splitText(text, 2_800);
+    const blockPrefix = role === "user" ? USER_TRANSCRIPT_BLOCK_PREFIX : "";
+    const chunks = splitTranscriptText(text, SLACK_SECTION_TEXT_MAX - blockPrefix.length);
+    const entryId = randomUUID();
     for (const [index, chunk] of chunks.entries()) {
       const result = await this.#app.client.chat.postMessage({
         channel: record.binding.channelId,
@@ -327,7 +333,7 @@ export class SlackController {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: role === "user" ? `*Local instruction*\n${escapeMrkdwn(chunk)}` : escapeMrkdwn(chunk),
+              text: `${blockPrefix}${escapeMrkdwn(chunk)}`,
             },
           },
         ],
@@ -335,6 +341,7 @@ export class SlackController {
           sessionId: record.session.id,
           bindingId: record.binding.bindingId,
           role,
+          entryId,
           chunk: index,
           chunks: chunks.length,
         }),
@@ -1142,13 +1149,3 @@ function buildQuestionBlocks(
   ];
 }
 
-
-function splitText(text: string, maximum: number): string[] {
-  const normalized = text.trim();
-  if (normalized.length <= maximum) return [normalized];
-  const chunks: string[] = [];
-  for (let offset = 0; offset < normalized.length; offset += maximum) {
-    chunks.push(normalized.slice(offset, offset + maximum));
-  }
-  return chunks;
-}
