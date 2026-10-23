@@ -4,6 +4,8 @@ Slackoff connects opted-in [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi)
 
 The project also includes Slackoff Console, an optional browser extension or userscript that turns the Slackoff direct message into a keyboard-first session dashboard.
 
+For [BB](https://getbb.app) threads, use the BB plugin in [`bb-plugin/`](bb-plugin/README.md) instead. It runs inside BB, needs no daemon or browser extension, and renders agent Markdown as native Slack formatting.
+
 ## How it works
 
 ```text
